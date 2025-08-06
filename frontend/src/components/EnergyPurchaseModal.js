@@ -3,7 +3,7 @@ import { FaBolt, FaCoins, FaTimes, FaPlus, FaMinus } from 'react-icons/fa';
 
 const EnergyPurchaseModal = ({ isOpen, onClose, onPurchase, playerCoins, currentEnergy, maxEnergy }) => {
   const [energyToPurchase, setEnergyToPurchase] = useState(1);
-  const COST_PER_ENERGY = 10; // 10 coins per energy
+  const COST_PER_ENERGY = 3; // 3 coins per energy
   
   if (!isOpen) return null;
 

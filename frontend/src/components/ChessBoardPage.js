@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { IoArrowBack, IoFlag, IoRefresh, IoHome } from 'react-icons/io5';
 import { 
   RedBird, Stella, YellowBird, BlueBird, BlackBird, WhiteBird,
@@ -26,6 +26,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiInstance, setAiInstance] = useState(null);
   const [isInCheck, setIsInCheck] = useState({ birds: false, pigs: false });
+  const moveHistoryRef = useRef(null);
 
   // Check for check status after each move
   useEffect(() => {
@@ -39,6 +40,13 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       });
     }
   }, [board, aiInstance]);
+
+  // Auto-scroll to latest move in history
+  useEffect(() => {
+    if (moveHistoryRef.current && moveHistory.length > 0) {
+      moveHistoryRef.current.scrollLeft = moveHistoryRef.current.scrollWidth;
+    }
+  }, [moveHistory]);
 
   // Initialize AI based on difficulty
   useEffect(() => {
@@ -512,8 +520,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
   }
 
   return (
-    <div className="min-h-screen max-h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 text-white p-2 sm:p-4">
-      <div className="max-w-7xl mx-auto h-full flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 text-white p-2 sm:p-4">
+      <div className="max-w-7xl mx-auto flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between mb-2 sm:mb-4 flex-shrink-0">
           <button
@@ -563,9 +571,9 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
           </div>
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-3 lg:gap-4 flex-1 min-h-0">
+        <div className="flex flex-col lg:flex-row gap-3 lg:gap-4">
           {/* Chess Board */}
-          <div className="flex-1 max-w-2xl mx-auto lg:mx-0 flex flex-col min-h-0">
+          <div className="flex-1 max-w-2xl mx-auto lg:mx-0 flex flex-col">
             {/* Top Territory Label - Pigs */}
             <div className="text-center mb-1 flex-shrink-0">
               <span className="text-xs sm:text-sm text-slate-400 bg-slate-800 px-3 py-1 rounded-full">
@@ -830,43 +838,56 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
             {/* Move History */}
             <div className="bg-slate-800 rounded-xl p-4 sm:p-5">
               <h3 className="text-lg sm:text-xl font-bold mb-3">Recent Moves</h3>
-              <div className="h-32 sm:h-36 overflow-y-auto space-y-2">
-                {moveHistory.slice(-8).map((move, index) => (
-                  <div key={index} className="text-sm text-slate-300 bg-slate-700/50 p-3 rounded">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium capitalize flex-1">
-                        {move.piece} {move.captured ? `captures ${move.captured}` : 'moves'}
-                        {move.isCheck && (
-                          <span className="text-red-400 ml-1 font-bold">+</span>
-                        )}
-                      </span>
-                      <span className="text-xs text-slate-400 ml-2 flex-shrink-0">
-                        #{moveHistory.length - moveHistory.slice(-8).length + index + 1}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-slate-400 font-mono">
-                        {move.fromPosition} → {move.toPosition}
-                      </span>
-                      <div className="flex gap-1">
-                        {move.captured && (
-                          <span className="text-xs text-red-400">
-                            ⚔️ Capture
-                          </span>
-                        )}
-                        {move.isCheck && (
-                          <span className="text-xs text-orange-400">
-                            ⚠️ Check
-                          </span>
-                        )}
+              <div className="h-20 overflow-x-auto overflow-y-hidden" ref={moveHistoryRef}>
+                <div className="flex gap-2 pb-2 min-w-max">
+                  {moveHistory.slice(-12).map((move, index) => (
+                    <div 
+                      key={index} 
+                      className="text-xs text-slate-300 bg-slate-700/50 p-2 rounded flex-shrink-0 min-w-[160px] max-w-[200px] border border-slate-600/50"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium capitalize text-xs truncate">
+                          {move.piece}
+                          {move.isCheck && (
+                            <span className="text-red-400 ml-1 font-bold">+</span>
+                          )}
+                        </span>
+                        <span className="text-xs text-slate-400 flex-shrink-0 ml-1">
+                          #{moveHistory.length - moveHistory.slice(-12).length + index + 1}
+                        </span>
                       </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400 font-mono flex-shrink-0">
+                          {move.fromPosition}→{move.toPosition}
+                        </span>
+                        <div className="flex gap-1 ml-1 flex-shrink-0">
+                          {move.captured && (
+                            <span className="text-red-400 text-xs">⚔️</span>
+                          )}
+                          {move.isCheck && (
+                            <span className="text-orange-400 text-xs">⚠️</span>
+                          )}
+                        </div>
+                      </div>
+                      {move.captured && (
+                        <div className="text-xs text-red-300 mt-1 truncate">
+                          Took {move.captured}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
-                {moveHistory.length === 0 && (
-                  <p className="text-slate-500 text-sm sm:text-base">No moves yet</p>
-                )}
+                  ))}
+                  {moveHistory.length === 0 && (
+                    <div className="flex items-center justify-center h-full text-slate-500 text-sm w-full">
+                      No moves yet
+                    </div>
+                  )}
+                </div>
               </div>
+              {moveHistory.length > 12 && (
+                <div className="text-xs text-slate-500 mt-2 text-center">
+                  ← Auto-scrolls to latest move →
+                </div>
+              )}
             </div>
 
             {/* Mission Briefing - Clickable */}
