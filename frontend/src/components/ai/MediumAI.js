@@ -130,6 +130,9 @@ export class MediumAI extends ChessAI {
           }
         }
         break;
+      default:
+        // Unknown piece type, no additional evaluation
+        break;
     }
 
     return value;

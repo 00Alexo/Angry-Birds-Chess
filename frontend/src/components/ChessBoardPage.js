@@ -8,6 +8,7 @@ import { EasyAI } from './ai/EasyAI.js';
 import { MediumAI } from './ai/MediumAI.js';
 import { HardAI } from './ai/HardAI.js';
 import { NightmareAI } from './ai/NightmareAI.js';
+import { ImpossibleAI } from './ai/ImpossibleAI.js';
 
 const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => {
   // Initial chess board setup
@@ -57,6 +58,9 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       case 'nightmare':
         ai = new NightmareAI();
         break;
+      case 'impossible':
+        ai = new ImpossibleAI();
+        break;
       default:
         ai = new EasyAI();
     }
@@ -69,7 +73,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     initializeBoard();
   }, []);
 
-  // Timer effect for hard and nightmare difficulties
+  // Timer effect for hard, nightmare, and impossible difficulties
   useEffect(() => {
     const difficulty = levelData?.difficulty?.toLowerCase();
     let timerDuration = null;
@@ -78,6 +82,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       timerDuration = 45;
     } else if (difficulty === 'nightmare') {
       timerDuration = 20;
+    } else if (difficulty === 'impossible') {
+      timerDuration = 15; // Even shorter time for impossible
     }
     
     if (timerDuration && gameStatus === 'playing') {
@@ -239,6 +245,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       setTimeRemaining(45);
     } else if (difficulty === 'nightmare') {
       setTimeRemaining(20);
+    } else if (difficulty === 'impossible') {
+      setTimeRemaining(15);
     }
   };
 
@@ -314,6 +322,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
         setTimeRemaining(45);
       } else if (difficulty === 'nightmare') {
         setTimeRemaining(20);
+      } else if (difficulty === 'impossible') {
+        setTimeRemaining(15);
       }
       setSelectedSquare(null);
       setPossibleMoves([]);
@@ -385,6 +395,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
           setTimeRemaining(45);
         } else if (difficulty === 'nightmare') {
           setTimeRemaining(20);
+        } else if (difficulty === 'impossible') {
+          setTimeRemaining(15);
         }
         setSelectedSquare(null);
         setPossibleMoves([]);
@@ -671,8 +683,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                 </div>
               )}
               
-              {/* Timer for hard and nightmare difficulties */}
-              {timeRemaining && (levelData?.difficulty?.toLowerCase() === 'hard' || levelData?.difficulty?.toLowerCase() === 'nightmare') && (
+              {/* Timer for hard, nightmare, and impossible difficulties */}
+              {timeRemaining && (levelData?.difficulty?.toLowerCase() === 'hard' || levelData?.difficulty?.toLowerCase() === 'nightmare' || levelData?.difficulty?.toLowerCase() === 'impossible') && (
                 <div className="mt-3 pt-3 border-t border-slate-600">
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-slate-400">Time Remaining:</span>
@@ -684,7 +696,11 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                     <div 
                       className={`h-2 rounded-full transition-all duration-1000 ${timeRemaining <= 10 ? 'bg-red-400' : 'bg-green-400'}`}
                       style={{ 
-                        width: `${(timeRemaining / (levelData?.difficulty?.toLowerCase() === 'hard' ? 45 : 20)) * 100}%` 
+                        width: `${(timeRemaining / (
+                          levelData?.difficulty?.toLowerCase() === 'hard' ? 45 : 
+                          levelData?.difficulty?.toLowerCase() === 'nightmare' ? 20 : 
+                          levelData?.difficulty?.toLowerCase() === 'impossible' ? 15 : 20
+                        )) * 100}%` 
                       }}
                     ></div>
                   </div>
@@ -915,6 +931,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                         levelData.difficulty?.toLowerCase() === 'medium' ? 'text-yellow-400' :
                         levelData.difficulty?.toLowerCase() === 'hard' ? 'text-orange-400' :
                         levelData.difficulty?.toLowerCase() === 'nightmare' ? 'text-red-400' :
+                        levelData.difficulty?.toLowerCase() === 'impossible' ? 'text-purple-400' :
                         'text-slate-400'
                       }`}>
                         {levelData.difficulty}
@@ -932,7 +949,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                   </div>
                 </div>
 
-                {(levelData.difficulty?.toLowerCase() === 'hard' || levelData.difficulty?.toLowerCase() === 'nightmare') && (
+                {(levelData.difficulty?.toLowerCase() === 'hard' || levelData.difficulty?.toLowerCase() === 'nightmare' || levelData.difficulty?.toLowerCase() === 'impossible') && (
                   <div className="bg-red-900/30 border border-red-800/50 rounded-lg p-4">
                     <h3 className="font-semibold text-red-400 mb-2 flex items-center gap-2">
                       ⚠️ Special Rules
@@ -941,7 +958,9 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                       <div className="flex justify-between">
                         <span>Move Timer:</span>
                         <span className="font-medium">
-                          {levelData.difficulty?.toLowerCase() === 'hard' ? '45s' : '20s'} per move
+                          {levelData.difficulty?.toLowerCase() === 'hard' ? '45s' : 
+                           levelData.difficulty?.toLowerCase() === 'nightmare' ? '20s' : 
+                           levelData.difficulty?.toLowerCase() === 'impossible' ? '15s' : '20s'} per move
                         </span>
                       </div>
                       <p className="mt-2 text-xs text-red-300">

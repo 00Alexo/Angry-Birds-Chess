@@ -134,6 +134,9 @@ export class HardAI extends ChessAI {
       case 'queen':
         value += this.evaluateQueen(board, row, col);
         break;
+      default:
+        // Unknown piece type, no additional evaluation
+        break;
     }
 
     return value;
