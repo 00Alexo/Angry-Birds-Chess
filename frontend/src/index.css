@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Fredoka+One:wght@400&display=swap');
+
+/* Custom styles for Angry Birds Chess */
+body {
+  margin: 0;
+  font-family: 'Fredoka One', 'Comic Sans MS', cursive;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, #87CEEB 0%, #98FB98 100%);
+  min-height: 100vh;
+}
+
+.game-title {
+  background: linear-gradient(45deg, #FF6B35, #F7931E);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.button-bounce {
+  transition: all 0.2s ease;
+}
+
+.button-bounce:hover {
+  transform: scale(1.05);
+}
+
+.button-bounce:active {
+  transform: scale(0.95);
+}
