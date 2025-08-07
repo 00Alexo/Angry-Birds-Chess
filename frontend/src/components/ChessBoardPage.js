@@ -10,7 +10,38 @@ import { HardAI } from './ai/HardAI.js';
 import { NightmareAI } from './ai/NightmareAI.js';
 import { ImpossibleAI } from './ai/ImpossibleAI.js';
 
-const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => {
+const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars }) => {
+  // Add custom animations
+  React.useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; transform: scale(0.9); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes bounce-gentle {
+        0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+        40% { transform: translateY(-10px); }
+        60% { transform: translateY(-5px); }
+      }
+      @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        10%, 30%, 50%, 70%, 90% { transform: translateX(-3px); }
+        20%, 40%, 60%, 80% { transform: translateX(3px); }
+      }
+      @keyframes spin-slow {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .animate-fadeIn { animation: fadeIn 0.5s ease-out; }
+      .animate-bounce-gentle { animation: bounce-gentle 2s infinite; }
+      .animate-shake { animation: shake 0.5s ease-in-out; }
+      .animate-spin-slow { animation: spin-slow 3s linear infinite; }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+
   // Initial chess board setup
   const [board, setBoard] = useState([]);
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -23,9 +54,17 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
   const [moveTimer, setMoveTimer] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(null);
   const [showMissionModal, setShowMissionModal] = useState(false);
+  const [showGameEndModal, setShowGameEndModal] = useState(false);
+  const [gameResult, setGameResult] = useState(null); // 'win', 'loss', 'draw'
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [aiInstance, setAiInstance] = useState(null);
   const [isInCheck, setIsInCheck] = useState({ birds: false, pigs: false });
+  const [positionHistory, setPositionHistory] = useState([]);
+  const [fiftyMoveCounter, setFiftyMoveCounter] = useState(0);
+  const [showPromotionModal, setShowPromotionModal] = useState(false);
+  const [promotionData, setPromotionData] = useState(null);
+  const [lastMove, setLastMove] = useState(null);
+  const [coinAnimation, setCoinAnimation] = useState({ isAnimating: false, startAmount: 0, endAmount: 0, currentAmount: 0 });
   const moveHistoryRef = useRef(null);
 
   // Check for check status after each move
@@ -33,6 +72,14 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     if (aiInstance && board.length > 0) {
       const birdsInCheck = aiInstance.isKingInCheck(board, 'birds');
       const pigsInCheck = aiInstance.isKingInCheck(board, 'pigs');
+      
+      // Debug log
+      if (birdsInCheck) {
+        console.log('🚨 BIRDS KING IS IN CHECK!');
+      }
+      if (pigsInCheck) {
+        console.log('🚨 PIGS KING IS IN CHECK!');
+      }
       
       setIsInCheck({
         birds: birdsInCheck,
@@ -48,7 +95,38 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     }
   }, [moveHistory]);
 
-  // Initialize AI based on difficulty
+  // Coin animation effect
+  useEffect(() => {
+    if (coinAnimation.isAnimating) {
+      const duration = 2000; // 2 seconds animation
+      const steps = 50; // Number of animation steps
+      const increment = (coinAnimation.endAmount - coinAnimation.startAmount) / steps;
+      const stepDuration = duration / steps;
+      
+      let currentStep = 0;
+      const interval = setInterval(() => {
+        currentStep++;
+        const newAmount = Math.round(coinAnimation.startAmount + (increment * currentStep));
+        
+        setCoinAnimation(prev => ({ ...prev, currentAmount: newAmount }));
+        
+        if (currentStep >= steps) {
+          clearInterval(interval);
+          // Actually add the coins to inventory after animation completes
+          if (addCoins) {
+            const coinsToAdd = coinAnimation.endAmount - coinAnimation.startAmount;
+            addCoins(coinsToAdd);
+          }
+          // Stop animation to prevent infinite loop
+          setCoinAnimation(prev => ({ ...prev, isAnimating: false }));
+        }
+      }, stepDuration);
+      
+      return () => clearInterval(interval);
+    }
+  }, [coinAnimation.isAnimating]); // Removed dependencies to prevent infinite loop
+
+  // Initiialize AI based on difficulty
   useEffect(() => {
     const difficulty = levelData?.difficulty?.toLowerCase();
     let ai = null;
@@ -100,9 +178,20 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       const timer = setInterval(() => {
         setTimeRemaining(prev => {
           if (prev <= 1) {
-            // Time's up - make random move or skip turn
-            setCurrentPlayer(currentPlayer === 'birds' ? 'pigs' : 'birds');
-            return timerDuration; // Reset timer for next player
+            // Time's up!
+            if (currentPlayer === 'birds') {
+              // Player runs out of time - they lose
+              setGameStatus('checkmate');
+              setGameResult('loss');
+              setTimeout(() => setShowGameEndModal(true), 500);
+              clearInterval(timer);
+              setMoveTimer(null);
+              return 0;
+            } else {
+              // AI runs out of time - switch turns (AI doesn't lose on time)
+              setCurrentPlayer('birds');
+              return timerDuration;
+            }
           }
           return prev - 1;
         });
@@ -120,6 +209,47 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
     const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
     return files[col] + ranks[row];
+  };
+
+  const getPromotedPiece = (type, team, size) => {
+    if (team === 'birds') {
+      switch (type) {
+        case 'queen': return <Stella size={size} />;
+        case 'rook': return <YellowBird size={size} />;
+        case 'bishop': return <WhiteBird size={size} />;
+        case 'knight': return <BlackBird size={size} />;
+        default: return <Stella size={size} />;
+      }
+    } else {
+      switch (type) {
+        case 'queen': return <QueenPig size={size} />;
+        case 'rook': return <CorporalPig size={size} />;
+        case 'bishop': return <ForemanPig size={size} />;
+        case 'knight': return <NinjaPig size={size} />;
+        default: return <QueenPig size={size} />;
+      }
+    }
+  };
+
+  const savePositionToHistory = (board, currentPlayer) => {
+    const position = {
+      board: board.map(row => row.map(piece => piece ? {...piece} : null)),
+      currentPlayer
+    };
+    setPositionHistory(prev => [...prev, position]);
+  };
+
+  // Calculate coin rewards based on difficulty
+  const calculateCoinReward = (difficulty) => {
+    const difficultyLower = difficulty?.toLowerCase();
+    switch (difficultyLower) {
+      case 'easy': return 25;
+      case 'medium': return 50;
+      case 'hard': return 100;
+      case 'nightmare': return 250;
+      case 'impossible': return 150; // Same as nightmare
+      default: return 25; // Default to easy if unknown
+    }
   };
 
   const initializeBoard = () => {
@@ -172,6 +302,9 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
 
     setBoard(newBoard);
     setIsGameStarted(true);
+    
+    // Initialize position history
+    savePositionToHistory(newBoard, 'birds');
   };
 
   const isValidMove = (fromRow, fromCol, toRow, toCol) => {
@@ -181,7 +314,25 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
 
   const calculatePossibleMoves = (fromRow, fromCol) => {
     if (!aiInstance) return [];
-    return aiInstance.getAllValidMoves(board, fromRow, fromCol);
+    
+    const moves = [];
+    const piece = board[fromRow][fromCol];
+    if (!piece) return [];
+    
+    // Check all squares on the board
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const moveValidation = aiInstance.isValidMoveWithSpecialRules(
+          board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
+        );
+        
+        if (moveValidation.valid) {
+          moves.push([row, col]);
+        }
+      }
+    }
+    
+    return moves;
   };
 
   // AI Logic using the new AI system
@@ -198,36 +349,221 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     });
   };
 
-  const executeMove = (fromRow, fromCol, toRow, toCol) => {
+  const executeMove = (fromRow, fromCol, toRow, toCol, specialMove = null, promotionType = 'queen') => {
     const piece = board[fromRow][fromCol];
     const newBoard = board.map(r => [...r]);
     const capturedPiece = newBoard[toRow][toCol];
-    
-    newBoard[toRow][toCol] = { ...piece, moved: true };
-    newBoard[fromRow][fromCol] = null;
-    
-    setBoard(newBoard);
-    setMoveHistory(prev => [...prev, { 
+    let moveData = {
       from: [fromRow, fromCol], 
       to: [toRow, toCol], 
       piece: piece.type,
       captured: capturedPiece?.type || null,
       capturedTeam: capturedPiece?.team || null,
       fromPosition: getPositionName(fromRow, fromCol),
-      toPosition: getPositionName(toRow, toCol)
-    }]);
+      toPosition: getPositionName(toRow, toCol),
+      special: specialMove
+    };
+
+    // Handle special moves
+    if (specialMove === 'castle') {
+      // Move king
+      newBoard[toRow][toCol] = { ...piece, moved: true };
+      newBoard[fromRow][fromCol] = null;
+      
+      // Move rook
+      const rookFromCol = toCol > fromCol ? 7 : 0;
+      const rookToCol = toCol > fromCol ? 5 : 3;
+      const rook = newBoard[fromRow][rookFromCol];
+      newBoard[fromRow][rookToCol] = { ...rook, moved: true };
+      newBoard[fromRow][rookFromCol] = null;
+      
+      moveData.special = toCol > fromCol ? 'castleKingside' : 'castleQueenside';
+    } else if (specialMove === 'enPassant') {
+      // Move pawn
+      newBoard[toRow][toCol] = { ...piece, moved: true };
+      newBoard[fromRow][fromCol] = null;
+      
+      // Remove captured pawn
+      const capturedPawnRow = piece.team === 'birds' ? toRow + 1 : toRow - 1;
+      const capturedPawn = newBoard[capturedPawnRow][toCol];
+      newBoard[capturedPawnRow][toCol] = null;
+      
+      moveData.captured = 'pawn';
+      moveData.capturedTeam = capturedPawn.team;
+      moveData.special = 'enPassant';
+    } else if (specialMove === 'promotion') {
+      // Promote pawn
+      const size = piece.piece.props.size;
+      newBoard[toRow][toCol] = { 
+        type: promotionType, 
+        team: piece.team, 
+        piece: getPromotedPiece(promotionType, piece.team, size), 
+        moved: true 
+      };
+      newBoard[fromRow][fromCol] = null;
+      
+      moveData.special = `promotion_${promotionType}`;
+      moveData.piece = promotionType; // Update piece type in history
+    } else {
+      // Normal move
+      newBoard[toRow][toCol] = { ...piece, moved: true };
+      newBoard[fromRow][fromCol] = null;
+    }
+    
+    setBoard(newBoard);
+    
+    // Update move counters for 50-move rule
+    const isPawnMoveOrCapture = piece.type === 'pawn' || capturedPiece !== null;
+    if (isPawnMoveOrCapture) {
+      setFiftyMoveCounter(0);
+    } else {
+      setFiftyMoveCounter(prev => prev + 1);
+    }
+    
+    // Set last move for en passant detection
+    setLastMove(moveData);
+    
+    setMoveHistory(prev => [...prev, moveData]);
+    
+    // Save position for repetition detection
+    savePositionToHistory(newBoard, currentPlayer === 'birds' ? 'pigs' : 'birds');
     
     // Check for checkmate after the move
     const newCurrentPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
     
     // Use a timeout to allow the board to update before checking game status
     setTimeout(() => {
-      if (aiInstance && aiInstance.isCheckmate(newBoard, newCurrentPlayer)) {
+      // Check for draws first
+      if (aiInstance.hasInsufficientMaterial(newBoard)) {
+        setGameStatus('stalemate');
+        setGameResult('draw');
+        
+        // Award partial coins for draw
+        if (levelData && addCoins && completeLevelWithStars) {
+          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const coinsEarned = Math.floor(baseCoins / 2);
+          const currentCoins = playerInventory?.coins || 0;
+          
+          // Start coin animation
+          setCoinAnimation({
+            isAnimating: true,
+            startAmount: currentCoins,
+            endAmount: currentCoins + coinsEarned,
+            currentAmount: currentCoins
+          });
+          
+          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
+          console.log(`🤝 Draw by insufficient material! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+        }
+        
+        setTimeout(() => setShowGameEndModal(true), 500);
+        console.log('Draw by insufficient material!');
+        return;
+      }
+      
+      if (aiInstance.isThreefoldRepetition(positionHistory)) {
+        setGameStatus('stalemate');
+        setGameResult('draw');
+        
+        // Award partial coins for draw
+        if (levelData && addCoins && completeLevelWithStars) {
+          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const coinsEarned = Math.floor(baseCoins / 2);
+          const currentCoins = playerInventory?.coins || 0;
+          
+          // Start coin animation
+          setCoinAnimation({
+            isAnimating: true,
+            startAmount: currentCoins,
+            endAmount: currentCoins + coinsEarned,
+            currentAmount: currentCoins
+          });
+          
+          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
+          console.log(`🤝 Draw by threefold repetition! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+        }
+        
+        setTimeout(() => setShowGameEndModal(true), 500);
+        console.log('Draw by threefold repetition!');
+        return;
+      }
+      
+      if (aiInstance.isFiftyMoveRule(moveHistory)) {
+        setGameStatus('stalemate');
+        setGameResult('draw');
+        
+        // Award partial coins for draw
+        if (levelData && addCoins && completeLevelWithStars) {
+          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const coinsEarned = Math.floor(baseCoins / 2);
+          const currentCoins = playerInventory?.coins || 0;
+          
+          // Start coin animation
+          setCoinAnimation({
+            isAnimating: true,
+            startAmount: currentCoins,
+            endAmount: currentCoins + coinsEarned,
+            currentAmount: currentCoins
+          });
+          
+          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
+          console.log(`🤝 Draw by 50-move rule! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+        }
+        
+        setTimeout(() => setShowGameEndModal(true), 500);
+        console.log('Draw by 50-move rule!');
+        return;
+      }
+      
+      if (aiInstance && aiInstance.isCheckmate(newBoard, newCurrentPlayer, lastMove, { positionHistory, fiftyMoveCounter })) {
         setGameStatus('checkmate');
         // Winner is the team that just moved
+        const winner = currentPlayer;
+        const isPlayerWin = winner === 'birds';
+        setGameResult(isPlayerWin ? 'win' : 'loss');
+        
+        // Award coins for winning and save level progress
+        if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
+          const coinsEarned = calculateCoinReward(levelData.difficulty);
+          const currentCoins = playerInventory?.coins || 0;
+          
+          // Start coin animation
+          setCoinAnimation({
+            isAnimating: true,
+            startAmount: currentCoins,
+            endAmount: currentCoins + coinsEarned,
+            currentAmount: currentCoins
+          });
+          
+          completeLevelWithStars(levelData.id, 3, coinsEarned); // 3 stars for checkmate win
+          console.log(`🏆 Victory! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+        }
+        
+        setTimeout(() => setShowGameEndModal(true), 500); // Small delay for dramatic effect
         console.log(`Checkmate! ${currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'} win!`);
-      } else if (aiInstance && aiInstance.getAllPossibleMoves(newBoard, newCurrentPlayer).length === 0) {
+      } else if (aiInstance && aiInstance.getAllPossibleMoves(newBoard, newCurrentPlayer, lastMove, { positionHistory, fiftyMoveCounter }).length === 0) {
         setGameStatus('stalemate');
+        setGameResult('draw');
+        
+        // Award partial coins for draw
+        if (levelData && addCoins && completeLevelWithStars) {
+          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const coinsEarned = Math.floor(baseCoins / 2);
+          const currentCoins = playerInventory?.coins || 0;
+          
+          // Start coin animation
+          setCoinAnimation({
+            isAnimating: true,
+            startAmount: currentCoins,
+            endAmount: currentCoins + coinsEarned,
+            currentAmount: currentCoins
+          });
+          
+          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
+          console.log(`🤝 Draw! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+        }
+        
+        setTimeout(() => setShowGameEndModal(true), 500);
         console.log('Stalemate!');
       }
       
@@ -304,63 +640,31 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     }
 
     const piece = board[fromRow][fromCol];
-    if (piece && piece.team === currentPlayer && isValidMove(fromRow, fromCol, row, col)) {
-      // Make the move
-      const newBoard = board.map(r => [...r]);
-      const capturedPiece = newBoard[row][col];
+    if (piece && piece.team === currentPlayer) {
+      // Check for special moves
+      const moveValidation = aiInstance.isValidMoveWithSpecialRules(
+        board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
+      );
       
-      newBoard[row][col] = { ...piece, moved: true };
-      newBoard[fromRow][fromCol] = null;
-      
-      setBoard(newBoard);
-      setMoveHistory(prev => [...prev, { 
-        from: [fromRow, fromCol], 
-        to: [row, col], 
-        piece: piece.type,
-        captured: capturedPiece?.type || null,
-        capturedTeam: capturedPiece?.team || null,
-        fromPosition: getPositionName(fromRow, fromCol),
-        toPosition: getPositionName(row, col)
-      }]);
-      
-      // Switch players and reset timer
-      setCurrentPlayer(currentPlayer === 'birds' ? 'pigs' : 'birds');
-      const difficulty = levelData?.difficulty?.toLowerCase();
-      if (difficulty === 'hard') {
-        setTimeRemaining(45);
-      } else if (difficulty === 'nightmare') {
-        setTimeRemaining(20);
-      } else if (difficulty === 'impossible') {
-        setTimeRemaining(15);
-      }
-      setSelectedSquare(null);
-      setPossibleMoves([]);
-      
-      // Check for checkmate/stalemate after player move
-      const newCurrentPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
-      setTimeout(() => {
-        if (aiInstance && aiInstance.isCheckmate(newBoard, newCurrentPlayer)) {
-          setGameStatus('checkmate');
-          console.log(`Checkmate! ${currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'} win!`);
-        } else if (aiInstance && aiInstance.getAllPossibleMoves(newBoard, newCurrentPlayer).length === 0) {
-          setGameStatus('stalemate');
-          console.log('Stalemate!');
+      if (moveValidation.valid) {
+        if (moveValidation.special === 'promotion') {
+          // Show promotion modal
+          setPromotionData({ fromRow, fromCol, toRow: row, toCol: col });
+          setShowPromotionModal(true);
+          setSelectedSquare(null);
+          setPossibleMoves([]);
+          return;
+        } else if (moveValidation.special === 'castleKingside' || moveValidation.special === 'castleQueenside') {
+          executeMove(fromRow, fromCol, row, col, 'castle');
+        } else if (moveValidation.special === 'enPassant') {
+          executeMove(fromRow, fromCol, row, col, 'enPassant');
+        } else {
+          executeMove(fromRow, fromCol, row, col);
         }
         
-        // Check if the move resulted in check
-        const isCheckMove = aiInstance.isKingInCheck(newBoard, newCurrentPlayer);
-        if (isCheckMove) {
-          // Update the move history to indicate check
-          setMoveHistory(prev => {
-            const updatedHistory = [...prev];
-            const lastMove = updatedHistory[updatedHistory.length - 1];
-            if (lastMove) {
-              lastMove.isCheck = true;
-            }
-            return updatedHistory;
-          });
-        }
-      }, 100);
+        setSelectedSquare(null);
+        setPossibleMoves([]);
+      }
     }
   };
 
@@ -373,76 +677,45 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       if (fromRow === row && fromCol === col) {
         // Deselect if clicking the same square
         setSelectedSquare(null);
+        setPossibleMoves([]);
         return;
       }
 
       const piece = board[fromRow][fromCol];
-      if (piece && piece.team === currentPlayer && isValidMove(fromRow, fromCol, row, col)) {
-        // Make the move
-        const newBoard = board.map(r => [...r]);
-        const capturedPiece = newBoard[row][col];
+      if (piece && piece.team === currentPlayer) {
+        // Check for special moves
+        const moveValidation = aiInstance.isValidMoveWithSpecialRules(
+          board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
+        );
         
-        newBoard[row][col] = { ...piece, moved: true };
-        newBoard[fromRow][fromCol] = null;
-        
-        setBoard(newBoard);
-        setMoveHistory(prev => [...prev, { 
-          from: [fromRow, fromCol], 
-          to: [row, col], 
-          piece: piece.type,
-          captured: capturedPiece?.type || null,
-          capturedTeam: capturedPiece?.team || null,
-          fromPosition: getPositionName(fromRow, fromCol),
-          toPosition: getPositionName(row, col)
-        }]);
-        
-        // Switch players and reset timer
-        setCurrentPlayer(currentPlayer === 'birds' ? 'pigs' : 'birds');
-        const difficulty = levelData?.difficulty?.toLowerCase();
-        if (difficulty === 'hard') {
-          setTimeRemaining(45);
-        } else if (difficulty === 'nightmare') {
-          setTimeRemaining(20);
-        } else if (difficulty === 'impossible') {
-          setTimeRemaining(15);
-        }
-        setSelectedSquare(null);
-        setPossibleMoves([]);
-        
-        // Check for checkmate/stalemate after player move
-        const newCurrentPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
-        setTimeout(() => {
-          if (aiInstance && aiInstance.isCheckmate(newBoard, newCurrentPlayer)) {
-            setGameStatus('checkmate');
-            console.log(`Checkmate! ${currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'} win!`);
-          } else if (aiInstance && aiInstance.getAllPossibleMoves(newBoard, newCurrentPlayer).length === 0) {
-            setGameStatus('stalemate');
-            console.log('Stalemate!');
+        if (moveValidation.valid) {
+          if (moveValidation.special === 'promotion') {
+            // Show promotion modal
+            setPromotionData({ fromRow, fromCol, toRow: row, toCol: col });
+            setShowPromotionModal(true);
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+            return;
+          } else if (moveValidation.special === 'castleKingside' || moveValidation.special === 'castleQueenside') {
+            executeMove(fromRow, fromCol, row, col, 'castle');
+          } else if (moveValidation.special === 'enPassant') {
+            executeMove(fromRow, fromCol, row, col, 'enPassant');
+          } else {
+            executeMove(fromRow, fromCol, row, col);
           }
           
-          // Check if the move resulted in check
-          const isCheckMove = aiInstance.isKingInCheck(newBoard, newCurrentPlayer);
-          if (isCheckMove) {
-            // Update the move history to indicate check
-            setMoveHistory(prev => {
-              const updatedHistory = [...prev];
-              const lastMove = updatedHistory[updatedHistory.length - 1];
-              if (lastMove) {
-                lastMove.isCheck = true;
-              }
-              return updatedHistory;
-            });
-          }
-        }, 100);
-      } else {
-        // Select new piece if it belongs to current player
-        const newPiece = board[row][col];
-        if (newPiece && newPiece.team === currentPlayer) {
-          setSelectedSquare([row, col]);
-          setPossibleMoves(calculatePossibleMoves(row, col));
-        } else {
           setSelectedSquare(null);
           setPossibleMoves([]);
+        } else {
+          // Select new piece if it belongs to current player
+          const newPiece = board[row][col];
+          if (newPiece && newPiece.team === currentPlayer) {
+            setSelectedSquare([row, col]);
+            setPossibleMoves(calculatePossibleMoves(row, col));
+          } else {
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+          }
         }
       }
     } else {
@@ -469,6 +742,14 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
       (piece.team === 'pigs' && isInCheck.pigs)
     );
     
+    // Check if this is a castling move
+    const selectedPiece = selectedSquare ? board[selectedSquare[0]][selectedSquare[1]] : null;
+    const isCastlingMove = selectedPiece?.type === 'king' && 
+                          selectedSquare?.[1] === 4 && 
+                          selectedSquare?.[0] === row &&
+                          (col === 2 || col === 6) &&
+                          isPossibleMove;
+    
     // Check if this piece is attacking the enemy king
     let isAttackingKing = false;
     if (piece && aiInstance && (isInCheck.birds || isInCheck.pigs)) {
@@ -485,6 +766,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     if (isSelected) return 'bg-yellow-400 border-yellow-600';
     if (isKingInCheckSquare) return 'bg-red-500 border-red-700 animate-pulse shadow-lg shadow-red-500/50'; // Highlight king in check with glow
     if (isAttackingKing) return 'bg-orange-400 border-orange-600 animate-pulse'; // Highlight attacking pieces
+    if (isCastlingMove) return 'bg-purple-400 border-purple-600 animate-pulse shadow-lg'; // Special highlight for castling
     if (isCapture) return 'bg-red-400 border-red-600'; // Highlight capture moves in red
     if (isPossibleMove) return 'bg-green-400 border-green-600'; // Highlight possible moves in green
     if (isLight) return 'bg-amber-100 border-amber-200';
@@ -506,6 +788,14 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
     setTimeRemaining(null);
     setIsAiThinking(false);
     setIsInCheck({ birds: false, pigs: false });
+    setShowGameEndModal(false);
+    setGameResult(null);
+    setPositionHistory([]);
+    setFiftyMoveCounter(0);
+    setShowPromotionModal(false);
+    setPromotionData(null);
+    setLastMove(null);
+    setCoinAnimation({ isAnimating: false, startAmount: 0, endAmount: 0, currentAmount: 0 });
   };
 
   if (!isGameStarted) {
@@ -539,13 +829,29 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
           </div>
           
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* Coin Display with Animation */}
+            <div className="bg-slate-800 rounded-lg p-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🪙</span>
+                <span className="text-yellow-400 font-bold text-sm">
+                  {coinAnimation.isAnimating ? 
+                    coinAnimation.currentAmount : 
+                    (playerInventory?.coins || 0)
+                  }
+                </span>
+                {coinAnimation.isAnimating && (
+                  <span className="text-green-400 animate-pulse text-xs">⬆️</span>
+                )}
+              </div>
+            </div>
+
             {/* Battle Status - Compact */}
             <div className="bg-slate-800 rounded-lg p-2 text-xs hidden sm:block">
               <div className="text-slate-400 mb-1">Status</div>
               <div className="text-green-400 capitalize font-medium">{gameStatus}</div>
               <div className="text-slate-300">Move {moveHistory.length + 1}</div>
-              {/* Check indicator in header */}
-              {(isInCheck.birds || isInCheck.pigs) && gameStatus === 'playing' && (
+              {/* Check indicator in header - show when birds in check */}
+              {isInCheck.birds && gameStatus === 'playing' && (
                 <div className="text-red-400 font-bold text-xs mt-1 animate-pulse">
                   ⚠️ CHECK
                 </div>
@@ -590,7 +896,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                       className={`
                         aspect-square border border-opacity-50 rounded cursor-pointer 
                         transition-all duration-200 hover:shadow-lg
-                        flex items-center justify-center
+                        flex items-center justify-center relative
                         text-xs sm:text-sm
                         ${getSquareColor(rowIndex, colIndex)}
                       `}
@@ -607,6 +913,25 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                         >
                           {square.piece}
                         </div>
+                      )}
+                      
+                      {/* Castling indicator */}
+                      {!square && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
+                       selectedSquare && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
+                       selectedSquare[1] === 4 && selectedSquare[0] === rowIndex && (colIndex === 2 || colIndex === 6) && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                          <div className="text-2xl animate-bounce">🏰</div>
+                          <div className="text-xs font-bold text-white bg-purple-600 px-1 rounded mt-1">
+                            {colIndex === 6 ? 'O-O' : 'O-O-O'}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Regular move indicator */}
+                      {!square && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
+                       !(selectedSquare && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
+                         selectedSquare[1] === 4 && selectedSquare[0] === rowIndex && (colIndex === 2 || colIndex === 6)) && (
+                        <div className="w-4 h-4 bg-green-400 rounded-full opacity-80"></div>
                       )}
                     </div>
                   ))
@@ -637,8 +962,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                 </span>
               </div>
               
-              {/* Check Warning */}
-              {((currentPlayer === 'birds' && isInCheck.birds) || (currentPlayer === 'pigs' && isInCheck.pigs)) && (
+              {/* Check Warning - Show for birds (player) when in check */}
+              {isInCheck.birds && gameStatus === 'playing' && (
                 <div className="mt-3 pt-3 border-t border-slate-600">
                   <div className="bg-red-900/50 border border-red-600 rounded-lg p-3 animate-pulse">
                     <div className="flex items-center gap-2">
@@ -847,7 +1172,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                     >
                       <div className="flex items-center justify-between mb-1">
                         <span className="font-medium capitalize text-xs truncate">
-                          {move.piece}
+                          {move.special?.startsWith('promotion_') ? move.special.split('_')[1] : move.piece}
                           {move.isCheck && (
                             <span className="text-red-400 ml-1 font-bold">+</span>
                           )}
@@ -858,7 +1183,9 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                       </div>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-400 font-mono flex-shrink-0">
-                          {move.fromPosition}→{move.toPosition}
+                          {move.special === 'castleKingside' ? 'O-O' :
+                           move.special === 'castleQueenside' ? 'O-O-O' :
+                           `${move.fromPosition}→${move.toPosition}`}
                         </span>
                         <div className="flex gap-1 ml-1 flex-shrink-0">
                           {move.captured && (
@@ -867,11 +1194,35 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                           {move.isCheck && (
                             <span className="text-orange-400 text-xs">⚠️</span>
                           )}
+                          {move.special === 'enPassant' && (
+                            <span className="text-purple-400 text-xs">🎯</span>
+                          )}
+                          {(move.special === 'castleKingside' || move.special === 'castleQueenside') && (
+                            <span className="text-blue-400 text-xs">🏰</span>
+                          )}
+                          {move.special?.startsWith('promotion_') && (
+                            <span className="text-yellow-400 text-xs">👑</span>
+                          )}
                         </div>
                       </div>
-                      {move.captured && (
+                      {move.captured && !move.special?.includes('enPassant') && (
                         <div className="text-xs text-red-300 mt-1 truncate">
                           Took {move.captured}
+                        </div>
+                      )}
+                      {move.special === 'enPassant' && (
+                        <div className="text-xs text-purple-300 mt-1">
+                          En passant capture
+                        </div>
+                      )}
+                      {move.special?.startsWith('promotion_') && (
+                        <div className="text-xs text-yellow-300 mt-1">
+                          Promoted to {move.special.split('_')[1]}
+                        </div>
+                      )}
+                      {(move.special === 'castleKingside' || move.special === 'castleQueenside') && (
+                        <div className="text-xs text-blue-300 mt-1">
+                          {move.special === 'castleKingside' ? 'Short castle' : 'Long castle'}
                         </div>
                       )}
                     </div>
@@ -888,6 +1239,27 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                   ← Auto-scrolls to latest move →
                 </div>
               )}
+              
+              {/* Game rule status indicators */}
+              {(fiftyMoveCounter > 40 || positionHistory.length > 4) && (
+                <div className="mt-3 pt-3 border-t border-slate-600">
+                  <div className="text-xs text-slate-400 space-y-1">
+                    {fiftyMoveCounter > 40 && (
+                      <div className="flex justify-between">
+                        <span>50-Move Rule:</span>
+                        <span className={fiftyMoveCounter >= 100 ? 'text-red-400' : 'text-yellow-400'}>
+                          {Math.floor(fiftyMoveCounter / 2)}/50
+                        </span>
+                      </div>
+                    )}
+                    {aiInstance && positionHistory.length > 4 && aiInstance.isThreefoldRepetition(positionHistory) && (
+                      <div className="text-orange-400">
+                        Threefold repetition possible - claim draw!
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Mission Briefing - Clickable */}
@@ -902,7 +1274,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                       Mission Briefing
                     </h3>
                     <p className="text-sm text-slate-400 group-hover:text-slate-300 transition-colors duration-200">
-                      {levelData.coinReward} coins • {levelData.difficulty} • Click for details
+                      {calculateCoinReward(levelData?.difficulty)} coins • {levelData.difficulty} • Click for details
                     </p>
                   </div>
                   <div className="text-slate-400 group-hover:text-amber-300 transition-all duration-200 text-2xl group-hover:scale-110">
@@ -916,6 +1288,156 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
             )}
           </div>
         </div>
+
+        {/* Promotion Modal */}
+        {showPromotionModal && promotionData && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fadeIn">
+            <div className="bg-slate-800 rounded-2xl p-6 sm:p-8 max-w-sm w-full mx-4 shadow-2xl border border-slate-700">
+              <h2 className="text-2xl font-bold text-white mb-4 text-center flex items-center justify-center gap-2">
+                🎖️ Pawn Promotion
+              </h2>
+              <p className="text-slate-300 text-center mb-6">
+                Choose what to promote your pawn to:
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                {['queen', 'rook', 'bishop', 'knight'].map(pieceType => (
+                  <button
+                    key={pieceType}
+                    onClick={() => {
+                      executeMove(
+                        promotionData.fromRow, 
+                        promotionData.fromCol, 
+                        promotionData.toRow, 
+                        promotionData.toCol, 
+                        'promotion', 
+                        pieceType
+                      );
+                      setShowPromotionModal(false);
+                      setPromotionData(null);
+                    }}
+                    className="bg-slate-700 hover:bg-slate-600 text-white py-4 px-3 rounded-xl transition-all duration-200 font-medium hover:scale-105 flex flex-col items-center gap-2 border border-slate-600 hover:border-slate-500"
+                  >
+                    <div className="text-3xl">
+                      {getPromotedPiece(pieceType, currentPlayer, 32)}
+                    </div>
+                    <span className="text-sm capitalize">{pieceType}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="text-xs text-slate-400 text-center mt-4">
+                Queen is the most powerful choice, but others have strategic value!
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Game End Modal */}
+        {showGameEndModal && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fadeIn">
+            <div className={`bg-gradient-to-br rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl border-4 transform transition-all duration-500 ${
+              gameResult === 'win' 
+                ? 'from-green-400 via-emerald-500 to-teal-600 border-green-300 animate-bounce-gentle' 
+                : gameResult === 'loss'
+                ? 'from-red-400 via-red-500 to-red-600 border-red-300 animate-shake'
+                : 'from-yellow-400 via-orange-500 to-amber-600 border-yellow-300 animate-pulse'
+            }`}>
+              {/* Win Screen */}
+              {gameResult === 'win' && (
+                <div className="text-center text-white">
+                  <div className="text-6xl mb-4 animate-spin-slow">🏆</div>
+                  <h2 className="text-3xl font-bold mb-2 text-yellow-100 drop-shadow-lg">
+                    VICTORY!
+                  </h2>
+                  <p className="text-lg mb-4 text-green-100">
+                    The Angry Birds triumph! 🐦
+                  </p>
+                  <div className="bg-white/20 rounded-lg p-4 mb-6 backdrop-blur-sm">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">🪙</span>
+                      <span className="text-2xl font-bold text-yellow-200">
+                        +{coinAnimation.isAnimating ? 
+                          (coinAnimation.currentAmount - coinAnimation.startAmount) : 
+                          calculateCoinReward(levelData?.difficulty)
+                        }
+                      </span>
+                      <span className="text-lg text-yellow-100">coins</span>
+                      {coinAnimation.isAnimating && (
+                        <span className="text-lg text-green-300 animate-pulse">⬆️</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-green-100">Mission accomplished!</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Loss Screen */}
+              {gameResult === 'loss' && (
+                <div className="text-center text-white">
+                  <div className="text-6xl mb-4 animate-pulse">💀</div>
+                  <h2 className="text-3xl font-bold mb-2 text-red-100 drop-shadow-lg">
+                    DEFEAT
+                  </h2>
+                  <p className="text-lg mb-4 text-red-100">
+                    The Pigs have won this battle... 🐷
+                  </p>
+                  <div className="bg-white/20 rounded-lg p-4 mb-6 backdrop-blur-sm">
+                    <p className="text-sm text-red-100">
+                      Don't give up! Try again with a different strategy.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Draw Screen */}
+              {gameResult === 'draw' && (
+                <div className="text-center text-white">
+                  <div className="text-6xl mb-4 animate-bounce">🤝</div>
+                  <h2 className="text-3xl font-bold mb-2 text-orange-100 drop-shadow-lg">
+                    STALEMATE
+                  </h2>
+                  <p className="text-lg mb-4 text-amber-100">
+                    A draw! Neither side could claim victory.
+                  </p>
+                  <div className="bg-white/20 rounded-lg p-4 mb-6 backdrop-blur-sm">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">🪙</span>
+                      <span className="text-2xl font-bold text-yellow-200">
+                        +{coinAnimation.isAnimating ? 
+                          (coinAnimation.currentAmount - coinAnimation.startAmount) : 
+                          Math.floor(calculateCoinReward(levelData?.difficulty) / 2)
+                        }
+                      </span>
+                      <span className="text-lg text-yellow-100">coins</span>
+                      {coinAnimation.isAnimating && (
+                        <span className="text-lg text-amber-300 animate-pulse">⬆️</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-amber-100">Partial reward for the effort!</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowGameEndModal(false);
+                    resetGame();
+                  }}
+                  className="flex-1 bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold backdrop-blur-sm border border-white/30 hover:scale-105"
+                >
+                  Play Again
+                </button>
+                <button
+                  onClick={onBack}
+                  className="flex-1 bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold backdrop-blur-sm border border-white/30 hover:scale-105"
+                >
+                  Back to Menu
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mission Modal */}
         {showMissionModal && levelData && (
@@ -965,7 +1487,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy }) => 
                   <h3 className="font-semibold text-green-400 mb-2">Rewards</h3>
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">🪙</span>
-                    <span className="text-xl font-bold text-yellow-400">{levelData.coinReward}</span>
+                    <span className="text-xl font-bold text-yellow-400">{calculateCoinReward(levelData?.difficulty)}</span>
                     <span className="text-slate-300">coins</span>
                   </div>
                 </div>

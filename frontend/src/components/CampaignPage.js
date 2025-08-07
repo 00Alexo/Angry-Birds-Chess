@@ -35,7 +35,7 @@ const CampaignPage = ({
       unlocked: true,
       enemy: <RegularPig size={45} />,
       position: { x: 12, y: 88 },
-      coinReward: 50,
+      coinReward: 25,
       terrain: "Plains"
     },
     {
@@ -47,7 +47,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <CorporalPig size={45} />,
       position: { x: 25, y: 75 },
-      coinReward: 50,
+      coinReward: 25,
       terrain: "Forest"
     },
     {
@@ -59,7 +59,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <ForemanPig size={45} />,
       position: { x: 18, y: 62 },
-      coinReward: 50,
+      coinReward: 25,
       terrain: "Hills"
     },
     {
@@ -71,7 +71,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <CorporalPig size={45} />,
       position: { x: 35, y: 58 },
-      coinReward: 100,
+      coinReward: 50,
       terrain: "Mountains"
     },
     {
@@ -83,7 +83,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <NinjaPig size={45} />,
       position: { x: 52, y: 65 },
-      coinReward: 100,
+      coinReward: 50,
       terrain: "Desert"
     },
     {
@@ -95,7 +95,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <ForemanPig size={45} />,
       position: { x: 68, y: 72 },
-      coinReward: 100,
+      coinReward: 50,
       terrain: "Canyon"
     },
     {
@@ -107,7 +107,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <NinjaPig size={45} />,
       position: { x: 45, y: 48 },
-      coinReward: 100,
+      coinReward: 50,
       terrain: "Ruins"
     },
     {
@@ -119,7 +119,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <CorporalPig size={45} />,
       position: { x: 28, y: 45 },
-      coinReward: 200,
+      coinReward: 100,
       terrain: "Volcanic"
     },
     {
@@ -131,7 +131,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <QueenPig size={45} />,
       position: { x: 58, y: 38 },
-      coinReward: 200,
+      coinReward: 100,
       terrain: "Ice"
     },
     {
@@ -143,7 +143,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <ForemanPig size={45} />,
       position: { x: 75, y: 45 },
-      coinReward: 200,
+      coinReward: 100,
       terrain: "Crystal"
     },
     {
@@ -155,7 +155,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <NinjaPig size={45} />,
       position: { x: 42, y: 28 },
-      coinReward: 350,
+      coinReward: 250,
       terrain: "Shadow"
     },
     {
@@ -167,7 +167,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <KingPig size={45} />,
       position: { x: 62, y: 18 },
-      coinReward: 350,
+      coinReward: 250,
       terrain: "Royal"
     },
     {
@@ -179,7 +179,7 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <KingPig size={50} />,
       position: { x: 35, y: 12 },
-      coinReward: 500,
+      coinReward: 250,
       terrain: "Throne"
     }
   ];
