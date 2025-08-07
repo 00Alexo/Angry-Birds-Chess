@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   IoArrowBack, IoStar, IoLockClosed, IoCheckmarkCircle, IoTrophy, 
   IoInformationCircle, IoGift, IoWarning, IoCash, IoBatteryHalf, IoFlash, 
-  IoSettings, IoRefresh, IoAdd
+  IoSettings, IoRefresh, IoAdd, IoTime
 } from 'react-icons/io5';
 import { 
   RegularPig, CorporalPig, ForemanPig, QueenPig, KingPig, NinjaPig,
@@ -20,7 +20,9 @@ const CampaignPage = ({
   getLevelStars,
   purchaseEnergy,
   resetProgress,
-  timeUntilNextEnergy = 0
+  timeUntilNextEnergy = 0,
+  completeLevelWithStars, // Added missing prop
+  purchaseShopItem
 }) => {
   const [hoveredLevel, setHoveredLevel] = useState(null);
   const [showEnergyPurchase, setShowEnergyPurchase] = useState(false);
@@ -28,6 +30,92 @@ const CampaignPage = ({
   const [showPreview, setShowPreview] = useState(false);
   const [previewLevel, setPreviewLevel] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
+  const [showThemeSelector, setShowThemeSelector] = useState(false);
+  const [selectedTheme, setSelectedTheme] = useState('default');
+
+  // Handle level skip functionality
+  const handleSkipLevel = async () => {
+    if (!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0) {
+      console.log('No level skip tokens available');
+      return;
+    }
+
+    if (isLevelCompleted && isLevelCompleted(previewLevel.id)) {
+      console.log('Level already completed');
+      return;
+    }
+
+    try {
+      // First consume the level skip token (this should happen BEFORE completing the level)
+      const result = await purchaseShopItem('level_skip', 0, { 
+        skipLevel: previewLevel.id,
+        consumeToken: true 
+      });
+
+      if (!result.success) {
+        console.error('Failed to consume level skip token:', result.message);
+        return;
+      }
+
+      console.log(`🎯 Level skip token consumed. Remaining tokens: ${result.newPlayerData.levelSkipTokens}`);
+
+      // Then use a level skip token to complete the level with 1 star
+      await completeLevelWithStars(previewLevel.id, 1, previewLevel.coinReward);
+      
+      setShowPreview(false);
+      console.log(`Level ${previewLevel.id} skipped successfully!`);
+    } catch (error) {
+      console.error('Failed to skip level:', error);
+    }
+  };
+
+  // Available board themes
+  const boardThemes = {
+    default: {
+      name: 'Classic Wood',
+      colors: {
+        light: 'bg-amber-200',
+        dark: 'bg-amber-600',
+        border: 'bg-amber-900'
+      }
+    },
+    royal_board: {
+      name: 'Royal Gold',
+      colors: {
+        light: 'bg-yellow-100',
+        dark: 'bg-yellow-700',
+        border: 'bg-yellow-900'
+      }
+    },
+    forest_theme: {
+      name: 'Forest Green',
+      colors: {
+        light: 'bg-green-200',
+        dark: 'bg-green-600',
+        border: 'bg-green-900'
+      }
+    },
+    space_theme: {
+      name: 'Cosmic Purple',
+      colors: {
+        light: 'bg-purple-200',
+        dark: 'bg-purple-600',
+        border: 'bg-purple-900'
+      }
+    }
+  };
+
+  // Get available themes based on owned items
+  const getAvailableThemes = () => {
+    const available = [boardThemes.default];
+    if (playerInventory.ownedItems?.royal_board) available.push(boardThemes.royal_board);
+    if (playerInventory.ownedItems?.forest_theme) available.push(boardThemes.forest_theme);
+    if (playerInventory.ownedItems?.space_theme) available.push(boardThemes.space_theme);
+    return available;
+  };
+
+  // Campaign levels data - defined first to fix hoisting issue
   const campaignLevels = [
     {
       id: 1,
@@ -340,6 +428,145 @@ const CampaignPage = ({
     }
   ];
 
+  // Listen for campaign completion celebration AND check completion on page load
+  useEffect(() => {
+    const handleCampaignCompleted = (event) => {
+      console.log('🎉 CampaignPage: Received campaignCompleted event!', event.detail);
+      const { bonusCoins, totalLevels } = event.detail;
+      setShowCompletionCelebration({ bonusCoins, totalLevels });
+      
+      // Auto-hide celebration after 10 seconds (extended for testing)
+      setTimeout(() => {
+        setShowCompletionCelebration(false);
+      }, 10000);
+    };
+
+    // Check if all levels are completed when page loads
+    const checkCompletionOnLoad = async () => {
+      console.log('🔍 CampaignPage: Checking completion status on page load...');
+      
+      // Wait a moment for data to load
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const allCompleted = Array.from({length: 13}, (_, i) => i + 1).every(id => 
+        isLevelCompleted && isLevelCompleted(id)
+      );
+      
+      console.log(`🔍 All levels completed: ${allCompleted}`);
+      console.log('📊 Level completion status:', Array.from({length: 13}, (_, i) => i + 1).map(id => 
+        `Level ${id}: ${isLevelCompleted && isLevelCompleted(id) ? '✅' : '❌'}`
+      ));
+      
+      if (allCompleted) {
+        console.log('🎯 ALL LEVELS COMPLETED ON PAGE LOAD! Checking completion bonus...');
+        
+        // Import database dynamically to check bonus status
+        const gameDB = (await import('../utils/database')).default;
+        const completionBonusAwarded = await gameDB.getCompletionBonusStatus();
+        
+        console.log(`💎 Completion bonus already awarded: ${completionBonusAwarded}`);
+        
+        if (!completionBonusAwarded) {
+          console.log('🚨 COMPLETION BONUS NOT AWARDED YET! Triggering celebration...');
+          
+          // Award 1000 coin completion bonus
+          const playerData = await gameDB.getPlayerData();
+          console.log('💰 Current player data before bonus:', playerData);
+          
+          const newPlayerData = {
+            ...playerData,
+            coins: playerData.coins + 1000,
+            totalCoinsEarned: (playerData.totalCoinsEarned || 0) + 1000,
+            completionBonusAwarded: true
+          };
+          
+          await gameDB.savePlayerData(newPlayerData);
+          await gameDB.markCompletionBonusAwarded();
+          
+          console.log('🎉 CAMPAIGN COMPLETED! Awarded 1000 coin completion bonus on page load!');
+          console.log('💰 New player data after bonus:', newPlayerData);
+          
+          // Trigger celebration screen
+          setShowCompletionCelebration({ bonusCoins: 1000, totalLevels: 13 });
+          
+          // Auto-hide celebration after 10 seconds
+          setTimeout(() => {
+            setShowCompletionCelebration(false);
+          }, 10000);
+          
+          // Force refresh player inventory
+          console.log('🔄 Dispatching forceRefreshInventory event...');
+          window.dispatchEvent(new CustomEvent('forceRefreshInventory'));
+        } else {
+          console.log('✅ Completion bonus already awarded, no celebration needed');
+        }
+      } else {
+        console.log('❌ Not all levels completed, no bonus check needed');
+      }
+    };
+
+    console.log('🎯 CampaignPage: Setting up campaignCompleted event listener...');
+    
+    const handleCoinMultiplierUsed = (event) => {
+      const { originalCoins, finalCoins, usesLeft } = event.detail;
+      
+      // Create a temporary notification element
+      const notification = document.createElement('div');
+      notification.innerHTML = `
+        <div class="fixed top-4 right-4 bg-gradient-to-r from-amber-500 to-yellow-500 text-white p-4 rounded-lg shadow-lg z-[9999] animate-bounce">
+          <div class="font-bold">🎉 Coin Multiplier Applied!</div>
+          <div>${originalCoins} → ${finalCoins} coins (${usesLeft} uses left)</div>
+        </div>
+      `;
+      
+      document.body.appendChild(notification);
+      
+      // Remove notification after 4 seconds
+      setTimeout(() => {
+        if (document.body.contains(notification)) {
+          document.body.removeChild(notification);
+        }
+      }, 4000);
+      
+      console.log(`🎉 Coin Multiplier Applied! ${originalCoins} → ${finalCoins} coins (${usesLeft} uses left)`);
+    };
+
+    window.addEventListener('campaignCompleted', handleCampaignCompleted);
+    window.addEventListener('coinMultiplierUsed', handleCoinMultiplierUsed);
+    
+    // Check completion status when page loads
+    if (isLevelCompleted && getLevelStars) {
+      checkCompletionOnLoad();
+    }
+    
+    return () => {
+      console.log('🎯 CampaignPage: Removing event listeners...');
+      window.removeEventListener('campaignCompleted', handleCampaignCompleted);
+      window.removeEventListener('coinMultiplierUsed', handleCoinMultiplierUsed);
+    };
+  }, [isLevelCompleted, getLevelStars]);
+
+  // Make completeLevelWithStars globally available for testing
+  useEffect(() => {
+    if (completeLevelWithStars) {
+      window.completeLevelWithStars = completeLevelWithStars;
+    }
+    return () => {
+      delete window.completeLevelWithStars;
+    };
+  }, [completeLevelWithStars]);
+
+  // Calculate actual progress stats
+  const getProgressStats = () => {
+    const completedLevels = campaignLevels.filter(level => isLevelCompleted && isLevelCompleted(level.id)).length;
+    const totalStars = campaignLevels.reduce((sum, level) => sum + (getLevelStars ? getLevelStars(level.id) : 0), 0);
+    const empireControl = Math.round((completedLevels / 13) * 100);
+    
+    return { completedLevels, totalStars, empireControl };
+  };
+
+  const { completedLevels, totalStars, empireControl } = getProgressStats();
+
   // Default full chess setup for levels that don't specify piece configuration (levels 9-13)
   const getDefaultPieceConfig = () => ({
     birdPieces: {
@@ -448,37 +675,64 @@ const CampaignPage = ({
             <p className="text-slate-400 text-base">Liberate the territories from pig control</p>
           </div>
           
-          <div className="flex items-center gap-6 bg-slate-800/40 px-6 py-3 rounded-xl border border-slate-600/30">
-            <div className="flex items-center gap-2">
-              <IoCash className="w-5 h-5 text-yellow-400" />
-              <span className="text-yellow-400 font-bold">{playerInventory.coins.toLocaleString()}</span>
+          <div className="flex items-center gap-6 bg-black/60 backdrop-blur-md rounded-2xl px-8 py-4 border-2 border-slate-500/50 shadow-2xl">
+            {/* Coins */}
+            <div className="flex items-center gap-3 bg-yellow-500/20 px-4 py-2 rounded-xl border border-yellow-400/50">
+              <IoCash className="w-6 h-6 text-yellow-300 drop-shadow-lg" />
+              <span className="text-yellow-100 font-black text-xl drop-shadow-md">{playerInventory.coins.toLocaleString()}</span>
+              <span className="text-yellow-300 font-bold text-sm">COINS</span>
             </div>
-            <div className="w-px h-6 bg-slate-600"></div>
-            <div className="flex items-center gap-2">
-              <IoBatteryHalf className="w-5 h-5 text-green-400" />
-              <span className="text-green-400 font-bold">{playerInventory.energy}/{playerInventory.maxEnergy}</span>
+            
+            {/* Separator */}
+            <div className="w-0.5 h-10 bg-slate-400/50 rounded-full"></div>
+            
+            {/* Energy */}
+            <div className="flex items-center gap-3 bg-green-500/20 px-4 py-2 rounded-xl border border-green-400/50">
+              <IoBatteryHalf className="w-6 h-6 text-green-300 drop-shadow-lg" />
+              <span className="text-green-100 font-black text-xl drop-shadow-md">{playerInventory.energy}</span>
+              <span className="text-green-300 font-bold text-lg">/</span>
+              <span className="text-green-200 font-bold text-lg">{playerInventory.maxEnergy}</span>
               {playerInventory.energy < playerInventory.maxEnergy && (
                 <button
                   onClick={() => setShowEnergyPurchase(true)}
-                  className="ml-2 p-1 bg-yellow-500 hover:bg-yellow-600 rounded-full transition-colors"
+                  className="ml-2 bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-2 py-1 rounded-lg transition-colors shadow-lg text-sm"
                   title="Buy Energy"
                 >
-                  <IoAdd className="w-3 h-3 text-white" />
+                  +
                 </button>
               )}
+              <span className="text-green-300 font-bold text-sm">ENERGY</span>
             </div>
+            
+            {/* Energy Timer */}
             {timeUntilNextEnergy > 0 && playerInventory.energy < playerInventory.maxEnergy && (
-              <div className="text-xs text-slate-400">
-                Next: {Math.ceil(timeUntilNextEnergy / 1000 / 60)}m
+              <div className="flex items-center gap-2 bg-cyan-500/20 px-3 py-2 rounded-lg border border-cyan-400/50">
+                <IoTime className="text-cyan-300 w-4 h-4" />
+                <span className="text-cyan-200 font-bold text-sm">
+                  Next: {Math.ceil(timeUntilNextEnergy / 1000 / 60)}m
+                </span>
               </div>
             )}
-            <div className="w-px h-6 bg-slate-600"></div>
+            
+            {/* Separator */}
+            <div className="w-0.5 h-10 bg-slate-400/50 rounded-full"></div>
+            
+            {/* Theme Selector */}
+            <button
+              onClick={() => setShowThemeSelector(!showThemeSelector)}
+              className="p-3 text-white bg-slate-600/60 hover:bg-slate-500/60 transition-colors rounded-xl border border-slate-400/50 hover:border-slate-300/50 shadow-lg"
+              title="Board Themes"
+            >
+              🎨
+            </button>
+            
+            {/* Dev Menu */}
             <button
               onClick={() => setShowDevMenu(!showDevMenu)}
-              className="p-1 text-slate-400 hover:text-slate-300 transition-colors"
+              className="p-3 text-slate-300 hover:text-white transition-colors bg-slate-700/60 hover:bg-slate-600/60 rounded-xl border border-slate-500/50"
               title="Developer Menu"
             >
-              <IoSettings className="w-4 h-4" />
+              <IoSettings className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -706,15 +960,15 @@ const CampaignPage = ({
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-300">Territories Liberated:</span>
-                <span className="text-emerald-400 font-bold">{campaignLevels.filter(l => l.completed).length}/13</span>
+                <span className="text-emerald-400 font-bold">{completedLevels}/13</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-300">Total Stars Earned:</span>
-                <span className="text-yellow-400 font-bold">{campaignLevels.reduce((sum, l) => sum + l.stars, 0)}/39</span>
+                <span className="text-yellow-400 font-bold">{totalStars}/39</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-300">Empire Control:</span>
-                <span className="text-cyan-400 font-bold">{Math.round((campaignLevels.filter(l => l.completed).length / 13) * 100)}%</span>
+                <span className="text-cyan-400 font-bold">{empireControl}%</span>
               </div>
             </div>
           </div>
@@ -733,6 +987,45 @@ const CampaignPage = ({
         <div className="fixed top-20 right-4 bg-slate-800 border border-slate-600 rounded-lg p-4 z-50 shadow-2xl">
           <h3 className="text-white font-bold mb-3">Developer Menu</h3>
           <div className="space-y-2">
+            <button
+              onClick={async () => {
+                if (window.confirm('Complete all levels? This will test the completion bonus.')) {
+                  // Complete all levels 1-13 with 3 stars each
+                  for (let levelId = 1; levelId <= 13; levelId++) {
+                    const result = await window.completeLevelWithStars(levelId, 3, levelId * 100);
+                    console.log(`Completed level ${levelId}:`, result);
+                  }
+                  setShowDevMenu(false);
+                  // Force refresh the page to see updated progress
+                  window.location.reload();
+                }
+              }}
+              className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
+            >
+              <IoTrophy className="inline mr-2" />
+              Complete All Levels
+            </button>
+            <button
+              onClick={async () => {
+                if (window.confirm('Reset completion bonus status? This will allow the bonus to be awarded again.')) {
+                  // Reset completion bonus status in database
+                  const gameDB = (await import('../utils/database')).default;
+                  const playerData = await gameDB.getPlayerData();
+                  const resetData = {
+                    ...playerData,
+                    completionBonusAwarded: false
+                  };
+                  delete resetData.completionBonusDate;
+                  await gameDB.savePlayerData(resetData);
+                  console.log('🔄 Completion bonus status reset!');
+                  setShowDevMenu(false);
+                }
+              }}
+              className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors"
+            >
+              <IoGift className="inline mr-2" />
+              Reset Completion Bonus
+            </button>
             <button
               onClick={async () => {
                 if (window.confirm('Reset all progress? This cannot be undone.')) {
@@ -923,8 +1216,8 @@ const CampaignPage = ({
               {/* Mini Board Preview */}
               <div className="bg-slate-700/50 rounded-lg p-4">
                 <h4 className="font-semibold text-blue-400 mb-3 text-center">Battle Formation Preview</h4>
-                <div className="bg-gradient-to-br from-amber-200 to-amber-600 p-2 rounded-xl mx-auto max-w-xs">
-                  <div className="grid grid-cols-8 gap-0.5 bg-amber-900 p-1 rounded-lg">
+                <div className={`bg-gradient-to-br from-${boardThemes[selectedTheme].colors.light.split('-')[1]}-200 to-${boardThemes[selectedTheme].colors.dark.split('-')[1]}-600 p-2 rounded-xl mx-auto max-w-xs`}>
+                  <div className={`grid grid-cols-8 gap-0.5 ${boardThemes[selectedTheme].colors.border} p-1 rounded-lg`}>
                     {Array(64).fill(null).map((_, index) => {
                       const row = Math.floor(index / 8);
                       const col = index % 8;
@@ -969,7 +1262,7 @@ const CampaignPage = ({
                         <div
                           key={index}
                           className={`aspect-square flex items-center justify-center ${
-                            isLight ? 'bg-amber-100' : 'bg-amber-800'
+                            isLight ? boardThemes[selectedTheme].colors.light : boardThemes[selectedTheme].colors.dark
                           }`}
                         >
                           {piece}
@@ -999,6 +1292,31 @@ const CampaignPage = ({
               >
                 Cancel
               </button>
+
+              {/* LEVEL SKIP BUTTON - ALWAYS VISIBLE */}
+              {isLevelUnlocked(previewLevel, campaignLevels) && 
+               !isLevelCompleted(previewLevel.id) && (
+                <button
+                  onClick={handleSkipLevel}
+                  disabled={!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0}
+                  className={`py-3 px-6 rounded-lg transition-colors font-medium flex items-center gap-2 shadow-lg transform hover:scale-105 ${
+                    playerInventory.levelSkipTokens > 0
+                      ? 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white'
+                      : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  }`}
+                  title={
+                    playerInventory.levelSkipTokens > 0 
+                      ? `Skip this level (${playerInventory.levelSkipTokens} tokens available)` 
+                      : 'No level skip tokens available - Buy from shop'
+                  }
+                >
+                  <IoAdd className="w-5 h-5 rotate-45" />
+                  {playerInventory.levelSkipTokens > 0 
+                    ? `SKIP (${playerInventory.levelSkipTokens})` 
+                    : 'SKIP (0)'
+                  }
+                </button>
+              )}
               
               {/* BIG PLAY BUTTON */}
               {isLevelUnlocked(previewLevel, campaignLevels) ? (
@@ -1042,6 +1360,112 @@ const CampaignPage = ({
                 </p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Theme Selector Modal */}
+      {showThemeSelector && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 max-w-md w-full border border-slate-700 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-white">Board Themes</h3>
+              <button
+                onClick={() => setShowThemeSelector(false)}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              {Object.entries(boardThemes).map(([themeId, theme]) => {
+                const isOwned = themeId === 'default' || playerInventory.ownedItems?.[themeId];
+                const isSelected = selectedTheme === themeId;
+                
+                if (!isOwned) return null;
+                
+                return (
+                  <button
+                    key={themeId}
+                    onClick={() => setSelectedTheme(themeId)}
+                    className={`w-full p-4 rounded-lg border-2 transition-all ${
+                      isSelected 
+                        ? 'border-blue-400 bg-blue-500/20' 
+                        : 'border-slate-600 bg-slate-700/50 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-left">
+                        <div className="text-white font-medium">{theme.name}</div>
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className={`w-4 h-4 rounded ${theme.colors.light}`}></div>
+                          <div className={`w-4 h-4 rounded ${theme.colors.dark}`}></div>
+                          <div className="text-slate-400 text-sm">Preview</div>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <div className="text-blue-400">✓</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            
+            <div className="mt-6 text-center">
+              <p className="text-slate-400 text-sm">
+                💡 Purchase more themes from the shop!
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Campaign Completion Celebration */}
+      {showCompletionCelebration && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4">
+          <div className="bg-gradient-to-br from-yellow-400 via-orange-500 to-red-500 rounded-3xl p-8 max-w-lg w-full mx-4 shadow-2xl border-4 border-yellow-300 relative overflow-hidden">
+            {/* Animated background elements */}
+            <div className="absolute inset-0 opacity-30">
+              <div className="absolute top-4 left-4 w-16 h-16 bg-white rounded-full blur-2xl animate-pulse"></div>
+              <div className="absolute top-12 right-8 w-12 h-12 bg-yellow-200 rounded-full blur-xl animate-pulse delay-1000"></div>
+              <div className="absolute bottom-8 left-12 w-20 h-20 bg-orange-300 rounded-full blur-3xl animate-pulse delay-2000"></div>
+            </div>
+            
+            <div className="relative z-10 text-center space-y-6">
+              <div className="text-6xl animate-bounce">🏆</div>
+              <h1 className="text-4xl font-black text-white drop-shadow-lg animate-pulse">
+                CAMPAIGN COMPLETED!
+              </h1>
+              <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-6 border-2 border-white/30">
+                <p className="text-2xl font-bold text-white mb-2">🎉 VICTORY ACHIEVED! 🎉</p>
+                <p className="text-xl text-yellow-100 mb-4">
+                  You've liberated all {showCompletionCelebration.totalLevels} territories from pig control!
+                </p>
+                <div className="bg-yellow-400/30 rounded-xl p-4 border-2 border-yellow-200">
+                  <p className="text-2xl font-black text-white">
+                    💰 BONUS REWARD: +{showCompletionCelebration.bonusCoins} COINS! 💰
+                  </p>
+                  <p className="text-lg text-yellow-100 mt-2">
+                    Campaign Completion Bonus Unlocked!
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex gap-4 justify-center">
+                <button
+                  onClick={() => setShowCompletionCelebration(false)}
+                  className="bg-white text-orange-600 px-8 py-3 rounded-xl font-bold text-lg shadow-lg hover:bg-yellow-100 transition-all duration-300 transform hover:scale-105"
+                >
+                  CONTINUE
+                </button>
+              </div>
+              
+              <div className="text-yellow-100 text-sm">
+                🌟 You are now the supreme ruler of the Angry Birds Empire! 🌟
+              </div>
+            </div>
           </div>
         </div>
       )}

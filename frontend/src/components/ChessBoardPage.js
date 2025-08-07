@@ -10,7 +10,27 @@ import { HardAI } from './ai/HardAI.js';
 import { NightmareAI } from './ai/NightmareAI.js';
 import { ImpossibleAI } from './ai/ImpossibleAI.js';
 
-const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars }) => {
+const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars, selectedTheme = 'default' }) => {
+  // Board theme definitions
+  const boardThemes = {
+    default: {
+      light: 'bg-amber-100 border-amber-200',
+      dark: 'bg-amber-800 border-amber-900'
+    },
+    royal_board: {
+      light: 'bg-yellow-100 border-yellow-200',
+      dark: 'bg-yellow-700 border-yellow-800'
+    },
+    forest_theme: {
+      light: 'bg-green-200 border-green-300',
+      dark: 'bg-green-600 border-green-700'
+    },
+    space_theme: {
+      light: 'bg-purple-200 border-purple-300',
+      dark: 'bg-purple-600 border-purple-700'
+    }
+  };
+
   // Add custom animations
   React.useEffect(() => {
     const style = document.createElement('style');
@@ -655,8 +675,14 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
             currentAmount: currentCoins
           });
           
-          completeLevelWithStars(levelData.id, 3, coinsEarned); // 3 stars for checkmate win
-          console.log(`🏆 Victory! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+          completeLevelWithStars(levelData.id, 3, coinsEarned).then((completionResult) => {
+            console.log(`🏆 Victory! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+            
+            // Check if completion bonus was awarded
+            if (completionResult && completionResult.bonusAwarded) {
+              console.log(`🎉 BONUS! Campaign completion bonus: +${completionResult.bonusAmount} coins!`);
+            }
+          });
         }
         
         setTimeout(() => setShowGameEndModal(true), 500); // Small delay for dramatic effect
@@ -1051,8 +1077,11 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     // Normal game colors (when not AI thinking)
     if (isCapture) return 'bg-red-400 border-red-600'; // Highlight capture moves in red
     if (isPossibleMove) return 'bg-green-400 border-green-600'; // Highlight possible moves in green
-    if (isLight) return 'bg-amber-100 border-amber-200';
-    return 'bg-amber-800 border-amber-900';
+    
+    // Use selected theme colors
+    const theme = boardThemes[selectedTheme] || boardThemes.default;
+    if (isLight) return theme.light;
+    return theme.dark;
   };
 
   const resetGame = () => {

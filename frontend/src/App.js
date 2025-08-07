@@ -6,6 +6,7 @@ import CharactersPage from './components/CharactersPage';
 import CampaignPage from './components/CampaignPage';
 import ChessBoardPage from './components/ChessBoardPage';
 import EnergyTestPage from './components/EnergyTestPage';
+import ShopPage from './components/ShopPage';
 import { usePlayerInventory, useCampaignProgress } from './hooks/useGameData';
 
 function App() {
@@ -30,7 +31,12 @@ function App() {
     spendEnergy, 
     purchaseEnergy,
     resetProgress,
-    timeUntilNextEnergy
+    timeUntilNextEnergy,
+    refreshPlayerData,
+    purchaseShopItem,
+    getDailyDeals,
+    saveSelectedTheme,
+    getSelectedTheme
   } = usePlayerInventory();
   const { completeLevelWithStars, isLevelCompleted, getLevelStars } = useCampaignProgress();
 
@@ -45,7 +51,7 @@ function App() {
       </div>
     );
   }
-  
+
   const showNotification = (message, type = 'info') => {
     setNotification({ show: true, message, type });
     // Auto-hide notification after 4 seconds
@@ -141,6 +147,11 @@ function App() {
     window.history.pushState(null, null, '/testing');
   };
 
+  const handleShowShop = () => {
+    setCurrentScreen('shop');
+    window.history.pushState(null, null, '/shop');
+  };
+
   const handleBackToCampaign = () => {
     setCurrentScreen('campaign');
     setSelectedLevel(null);
@@ -166,6 +177,15 @@ function App() {
         return <EnergyTestPage onBack={handleBackToMenu} />;
       case 'characters':
         return <CharactersPage onBack={handleBackToMenu} playerInventory={playerInventory} />;
+      case 'shop':
+        return (
+          <ShopPage 
+            onBack={handleBackToMenu} 
+            playerInventory={playerInventory}
+            purchaseShopItem={purchaseShopItem}
+            getDailyDeals={getDailyDeals}
+          />
+        );
       case 'chess':
         return (
           <ChessBoardPage 
@@ -175,6 +195,7 @@ function App() {
             spendEnergy={spendEnergy}
             addCoins={addCoins}
             completeLevelWithStars={completeLevelWithStars}
+            selectedTheme={playerInventory.selectedTheme || 'default'}
           />
         );
       case 'campaign':
@@ -188,6 +209,8 @@ function App() {
             purchaseEnergy={purchaseEnergy}
             resetProgress={resetProgress}
             timeUntilNextEnergy={timeUntilNextEnergy}
+            completeLevelWithStars={completeLevelWithStars}
+            purchaseShopItem={purchaseShopItem}
           />
         );
       default:
@@ -198,9 +221,12 @@ function App() {
             onSelectDifficulty={handleSelectDifficulty}
             onShowCampaign={handleShowCampaign}
             onShowTesting={handleShowTesting}
+            onShowShop={handleShowShop}
             playerInventory={playerInventory}
             purchaseEnergy={purchaseEnergy}
             timeUntilNextEnergy={timeUntilNextEnergy}
+            saveSelectedTheme={saveSelectedTheme}
+            getSelectedTheme={getSelectedTheme}
           />
         );
     }
