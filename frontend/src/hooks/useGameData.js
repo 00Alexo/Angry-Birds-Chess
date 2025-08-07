@@ -215,12 +215,36 @@ export const useCampaignProgress = () => {
         [levelId]: { levelId, ...progressData }
       }));
 
+      // Check if all 13 levels are now completed for completion bonus
+      const currentProgress = { ...levelProgress, [levelId]: { levelId, ...progressData } };
+      const allLevelsCompleted = Array.from({length: 13}, (_, i) => i + 1)
+        .every(id => currentProgress[id]?.completed);
+      
+      if (allLevelsCompleted) {
+        // Check if completion bonus has already been awarded
+        const completionBonusAwarded = await gameDB.getCompletionBonusStatus();
+        if (!completionBonusAwarded) {
+          // Award 1000 coin completion bonus
+          const playerData = await gameDB.getPlayerData();
+          const newPlayerData = {
+            ...playerData,
+            coins: playerData.coins + 1000,
+            totalCoinsEarned: (playerData.totalCoinsEarned || 0) + 1000,
+            completionBonusAwarded: true
+          };
+          await gameDB.savePlayerData(newPlayerData);
+          await gameDB.markCompletionBonusAwarded();
+          
+          console.log('🎉 CAMPAIGN COMPLETED! Awarded 1000 coin completion bonus!');
+        }
+      }
+
       return true;
     } catch (error) {
       console.error('Failed to save level progress:', error);
       return false;
     }
-  }, []);
+  }, [levelProgress]);
 
   // Check if level is completed
   const isLevelCompleted = useCallback((levelId) => {

@@ -72,7 +72,7 @@ export class ChessAI {
     }
   }
 
-  // Check if path is clear between two positions
+  // Check if path is clear between two positions (excluding start and end)
   isPathClear(board, fromRow, fromCol, toRow, toCol) {
     const rowStep = toRow > fromRow ? 1 : toRow < fromRow ? -1 : 0;
     const colStep = toCol > fromCol ? 1 : toCol < fromCol ? -1 : 0;
@@ -80,8 +80,14 @@ export class ChessAI {
     let currentRow = fromRow + rowStep;
     let currentCol = fromCol + colStep;
     
+    // Check each square along the path (excluding the destination)
     while (currentRow !== toRow || currentCol !== toCol) {
-      if (board[currentRow][currentCol] !== null) return false;
+      if (currentRow < 0 || currentRow >= 8 || currentCol < 0 || currentCol >= 8) {
+        return false; // Out of bounds
+      }
+      if (board[currentRow][currentCol] !== null) {
+        return false; // Path is blocked
+      }
       currentRow += rowStep;
       currentCol += colStep;
     }
@@ -162,20 +168,36 @@ export class ChessAI {
     const piece = board[fromRow][fromCol];
     const targetSquare = board[toRow][toCol];
     
-    if (!piece) return false;
+    if (!piece) {
+      console.log(`❌ No piece at ${fromRow},${fromCol}`);
+      return false;
+    }
     
     // Can't capture your own piece
-    if (targetSquare && targetSquare.team === piece.team) return false;
+    if (targetSquare && targetSquare.team === piece.team) {
+      console.log(`❌ Can't capture own piece: ${piece.type} trying to capture ${targetSquare.type}`);
+      return false;
+    }
     
     // Can't capture the king directly
-    if (targetSquare && targetSquare.type === 'king') return false;
+    if (targetSquare && targetSquare.type === 'king') {
+      console.log(`❌ Can't directly capture king`);
+      return false;
+    }
     
     // Check basic piece movement rules
-    if (!this.isBasicMoveValid(board, fromRow, fromCol, toRow, toCol)) return false;
+    if (!this.isBasicMoveValid(board, fromRow, fromCol, toRow, toCol)) {
+      console.log(`❌ Basic move invalid for ${piece.type} from ${fromRow},${fromCol} to ${toRow},${toCol}`);
+      return false;
+    }
     
     // Check if this move would leave the king in check
-    if (this.wouldLeaveKingInCheck(board, fromRow, fromCol, toRow, toCol)) return false;
+    if (this.wouldLeaveKingInCheck(board, fromRow, fromCol, toRow, toCol)) {
+      console.log(`❌ Move would leave ${piece.team} king in check`);
+      return false;
+    }
     
+    console.log(`✅ Valid move: ${piece.type} from ${fromRow},${fromCol} to ${toRow},${toCol}`);
     return true;
   }
 
@@ -184,6 +206,12 @@ export class ChessAI {
     const piece = board[fromRow][fromCol];
     const targetSquare = board[toRow][toCol];
     
+    // Can't move to the same square
+    if (fromRow === toRow && fromCol === toCol) return false;
+    
+    // Can't capture your own piece
+    if (targetSquare && targetSquare.team === piece.team) return false;
+    
     const rowDiff = Math.abs(toRow - fromRow);
     const colDiff = Math.abs(toCol - fromCol);
     
@@ -191,34 +219,57 @@ export class ChessAI {
       case 'pawn':
         if (piece.team === 'birds') {
           // Birds move up (decreasing row)
-          if (fromRow - toRow === 1 && colDiff === 0 && !targetSquare) return true;
+          if (fromRow - toRow === 1 && colDiff === 0 && !targetSquare) return true; // Forward move
           if (fromRow - toRow === 1 && colDiff === 1 && targetSquare) return true; // Capture
-          if (!piece.moved && fromRow - toRow === 2 && colDiff === 0 && !targetSquare) return true;
+          if (!piece.moved && fromRow - toRow === 2 && colDiff === 0 && !targetSquare && !board[fromRow - 1][fromCol]) return true; // Double move
         } else {
           // Pigs move down (increasing row)
-          if (toRow - fromRow === 1 && colDiff === 0 && !targetSquare) return true;
+          if (toRow - fromRow === 1 && colDiff === 0 && !targetSquare) return true; // Forward move
           if (toRow - fromRow === 1 && colDiff === 1 && targetSquare) return true; // Capture
-          if (!piece.moved && toRow - fromRow === 2 && colDiff === 0 && !targetSquare) return true;
+          if (!piece.moved && toRow - fromRow === 2 && colDiff === 0 && !targetSquare && !board[fromRow + 1][fromCol]) return true; // Double move
         }
         return false;
       case 'rook':
-        return (rowDiff === 0 || colDiff === 0) && this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        // Rook moves horizontally or vertically
+        if (rowDiff === 0 && colDiff > 0) {
+          // Horizontal move
+          return this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        } else if (colDiff === 0 && rowDiff > 0) {
+          // Vertical move
+          return this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        }
+        return false;
       case 'bishop':
-        return rowDiff === colDiff && this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        // Bishop moves diagonally
+        if (rowDiff === colDiff && rowDiff > 0) {
+          return this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        }
+        return false;
       case 'queen':
-        return (rowDiff === colDiff || rowDiff === 0 || colDiff === 0) && this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        // Queen combines rook and bishop moves
+        if ((rowDiff === colDiff && rowDiff > 0) || // Diagonal
+            (rowDiff === 0 && colDiff > 0) ||      // Horizontal
+            (colDiff === 0 && rowDiff > 0)) {      // Vertical
+          return this.isPathClear(board, fromRow, fromCol, toRow, toCol);
+        }
+        return false;
       case 'king':
-        return rowDiff <= 1 && colDiff <= 1;
+        // King moves one square in any direction
+        return rowDiff <= 1 && colDiff <= 1 && (rowDiff > 0 || colDiff > 0);
       case 'knight':
+        // Knight moves in L-shape
         return (rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2);
       default:
         return false;
     }
   }
 
-  // Get all possible moves for a team
+  // Get all possible moves for a team (MUST respect check rules)
   getAllPossibleMoves(board, team, lastMove = null, gameState = null) {
     const moves = [];
+    
+    // If the king is in check, ONLY return moves that get out of check
+    const isInCheck = this.isKingInCheck(board, team);
     
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
@@ -226,16 +277,29 @@ export class ChessAI {
         if (piece && piece.team === team) {
           const pieceMoves = this.getAllValidMoves(board, row, col, lastMove, gameState);
           pieceMoves.forEach(([toRow, toCol]) => {
-            moves.push({
-              fromRow: row,
-              fromCol: col,
-              toRow,
-              toCol,
-              piece: piece.type
-            });
+            // Double-check: ensure move is legal and doesn't leave king in check
+            const moveValidation = this.isValidMoveWithSpecialRules(
+              board, row, col, toRow, toCol, lastMove, gameState || {}
+            );
+            
+            if (moveValidation.valid) {
+              moves.push({
+                fromRow: row,
+                fromCol: col,
+                toRow,
+                toCol,
+                piece: piece.type,
+                special: moveValidation.special
+              });
+            }
           });
         }
       }
+    }
+    
+    // If in check and no valid moves, it's checkmate - return empty array
+    if (isInCheck && moves.length === 0) {
+      console.log(`🚨 ${team} is in CHECKMATE - no legal moves available!`);
     }
     
     return moves;

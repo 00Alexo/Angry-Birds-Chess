@@ -6,7 +6,8 @@ import {
   IoSettings, IoRefresh, IoAdd
 } from 'react-icons/io5';
 import { 
-  RegularPig, CorporalPig, ForemanPig, QueenPig, KingPig, NinjaPig
+  RegularPig, CorporalPig, ForemanPig, QueenPig, KingPig, NinjaPig,
+  RedBird, Stella, YellowBird, BlueBird, BlackBird, WhiteBird
 } from './characters';
 import EnergyPurchaseModal from './EnergyPurchaseModal';
 import EnergyDisplay from './EnergyDisplay';
@@ -24,6 +25,8 @@ const CampaignPage = ({
   const [hoveredLevel, setHoveredLevel] = useState(null);
   const [showEnergyPurchase, setShowEnergyPurchase] = useState(false);
   const [showDevMenu, setShowDevMenu] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewLevel, setPreviewLevel] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const campaignLevels = [
     {
@@ -35,8 +38,25 @@ const CampaignPage = ({
       unlocked: true,
       enemy: <RegularPig size={45} />,
       position: { x: 12, y: 88 },
-      coinReward: 25,
-      terrain: "Plains"
+      coinReward: 50,
+      terrain: "Plains",
+      // Starter level - you have advantage with rook
+      birdPieces: {
+        king: true,
+        pawns: 6,
+        rooks: 1, // You get 1 rook advantage
+        knights: 0,
+        bishops: 0,
+        queen: false
+      },
+      pigPieces: {
+        king: true,
+        pawns: 4, // Enemy has fewer pawns
+        rooks: 0,
+        knights: 0,
+        bishops: 0,
+        queen: false
+      }
     },
     {
       id: 2,
@@ -47,8 +67,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <CorporalPig size={45} />,
       position: { x: 25, y: 75 },
-      coinReward: 25,
-      terrain: "Forest"
+      coinReward: 75,
+      terrain: "Forest",
+      // You get knight advantage
+      birdPieces: {
+        king: true,
+        pawns: 7,
+        rooks: 1,
+        knights: 1, // You get knight
+        bishops: 0,
+        queen: false
+      },
+      pigPieces: {
+        king: true,
+        pawns: 6,
+        rooks: 1,
+        knights: 0, // Enemy has no knight
+        bishops: 0,
+        queen: false
+      }
     },
     {
       id: 3,
@@ -59,8 +96,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <ForemanPig size={45} />,
       position: { x: 18, y: 62 },
-      coinReward: 25,
-      terrain: "Hills"
+      coinReward: 100,
+      terrain: "Hills",
+      // Both get bishops, you have advantage
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 1,
+        bishops: 2, // You get both bishops
+        queen: false
+      },
+      pigPieces: {
+        king: true,
+        pawns: 7,
+        rooks: 1,
+        knights: 1,
+        bishops: 1, // Enemy gets 1 bishop
+        queen: false
+      }
     },
     {
       id: 4,
@@ -71,8 +125,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <CorporalPig size={45} />,
       position: { x: 35, y: 58 },
-      coinReward: 50,
-      terrain: "Mountains"
+      coinReward: 150,
+      terrain: "Mountains",
+      // You get queen first!
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true // First queen advantage
+      },
+      pigPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 1,
+        bishops: 1,
+        queen: false // Enemy still no queen
+      }
     },
     {
       id: 5,
@@ -83,8 +154,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <NinjaPig size={45} />,
       position: { x: 52, y: 65 },
-      coinReward: 50,
-      terrain: "Desert"
+      coinReward: 200,
+      terrain: "Desert",
+      // Both have queens now, equal
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      },
+      pigPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 1, // Enemy still 1 bishop less
+        queen: true
+      }
     },
     {
       id: 6,
@@ -95,8 +183,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <ForemanPig size={45} />,
       position: { x: 68, y: 72 },
-      coinReward: 50,
-      terrain: "Canyon"
+      coinReward: 250,
+      terrain: "Canyon",
+      // You keep full army, enemy still missing pieces
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      },
+      pigPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 1, // Enemy missing 1 knight
+        bishops: 2,
+        queen: true
+      }
     },
     {
       id: 7,
@@ -107,8 +212,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <NinjaPig size={45} />,
       position: { x: 45, y: 48 },
-      coinReward: 50,
-      terrain: "Ruins"
+      coinReward: 300,
+      terrain: "Ruins",
+      // You still have advantage - enemy missing rook
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      },
+      pigPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 1, // Enemy missing 1 rook
+        knights: 2,
+        bishops: 2,
+        queen: true
+      }
     },
     {
       id: 8,
@@ -119,8 +241,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <CorporalPig size={45} />,
       position: { x: 28, y: 45 },
-      coinReward: 100,
-      terrain: "Volcanic"
+      coinReward: 400,
+      terrain: "Volcanic",
+      // Last level with advantage - you have extra pawn
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      },
+      pigPieces: {
+        king: true,
+        pawns: 7, // Enemy missing 1 pawn
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      }
     },
     {
       id: 9,
@@ -131,8 +270,25 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <QueenPig size={45} />,
       position: { x: 58, y: 38 },
-      coinReward: 100,
-      terrain: "Ice"
+      coinReward: 500,
+      terrain: "Ice",
+      // Full armies from level 9 onwards - now equal
+      birdPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      },
+      pigPieces: {
+        king: true,
+        pawns: 8,
+        rooks: 2,
+        knights: 2,
+        bishops: 2,
+        queen: true
+      }
     },
     {
       id: 10,
@@ -143,31 +299,31 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <ForemanPig size={45} />,
       position: { x: 75, y: 45 },
-      coinReward: 100,
+      coinReward: 600,
       terrain: "Crystal"
     },
     {
       id: 11,
       name: "Shadow Spire",
-      difficulty: "nightmare",
+      difficulty: "hard",
       stars: 0,
       completed: false,
       unlocked: false,
       enemy: <NinjaPig size={45} />,
       position: { x: 42, y: 28 },
-      coinReward: 250,
+      coinReward: 700,
       terrain: "Shadow"
     },
     {
       id: 12,
       name: "King's Dominion",
-      difficulty: "nightmare",
+      difficulty: "hard",
       stars: 0,
       completed: false,
       unlocked: false,
       enemy: <KingPig size={45} />,
       position: { x: 62, y: 18 },
-      coinReward: 250,
+      coinReward: 800,
       terrain: "Royal"
     },
     {
@@ -179,10 +335,30 @@ const CampaignPage = ({
       unlocked: false,
       enemy: <KingPig size={50} />,
       position: { x: 35, y: 12 },
-      coinReward: 250,
+      coinReward: 1000,
       terrain: "Throne"
     }
   ];
+
+  // Default full chess setup for levels that don't specify piece configuration (levels 9-13)
+  const getDefaultPieceConfig = () => ({
+    birdPieces: {
+      king: true,
+      pawns: 8,
+      rooks: 2,
+      knights: 2,
+      bishops: 2,
+      queen: true
+    },
+    pigPieces: {
+      king: true,
+      pawns: 8,
+      rooks: 2,
+      knights: 2,
+      bishops: 2,
+      queen: true
+    }
+  });
 
   // Dynamic level unlocking logic
   const isLevelUnlocked = (level, allLevels) => {
@@ -390,13 +566,13 @@ const CampaignPage = ({
                   top: `${level.position.y}%`
                 }}
                 onClick={() => {
-                  if (levelUnlocked && playerInventory.energy >= 20) {
-                    onSelectLevel(level.id, level);
-                  } else if (!levelUnlocked) {
-                    console.log('Complete the previous level first!');
-                  } else if (playerInventory.energy < 20) {
-                    console.log('Not enough energy! You need 20 energy to start a battle.');
-                  }
+                  // Always show preview, even for locked levels
+                  const enhancedLevel = {
+                    ...level,
+                    ...(level.birdPieces ? {} : getDefaultPieceConfig())
+                  };
+                  setPreviewLevel(enhancedLevel);
+                  setShowPreview(true);
                 }}
                 onMouseEnter={(e) => {
                   setHoveredLevel(level.id);
@@ -674,6 +850,200 @@ const CampaignPage = ({
           );
         })(),
         document.body
+      )}
+      
+      {/* Compact Level Preview Modal */}
+      {showPreview && previewLevel && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-2xl border border-slate-700">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                {previewLevel.enemy} {previewLevel.name}
+              </h2>
+              <button
+                onClick={() => setShowPreview(false)}
+                className="text-slate-400 hover:text-white transition-colors text-2xl"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="space-y-6">
+              {/* Level Details */}
+              <div className="bg-slate-700/50 rounded-lg p-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Difficulty:</span>
+                      <span className={`capitalize font-bold ${
+                        previewLevel.difficulty === 'easy' ? 'text-green-400' :
+                        previewLevel.difficulty === 'medium' ? 'text-yellow-400' :
+                        previewLevel.difficulty === 'hard' ? 'text-orange-400' :
+                        'text-red-400'
+                      }`}>
+                        {previewLevel.difficulty.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Terrain:</span>
+                      <span className="text-cyan-400">{previewLevel.terrain}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Stars:</span>
+                      <div className="flex gap-1">
+                        {[1, 2, 3].map(star => (
+                          <IoStar key={star} className={`w-4 h-4 ${star <= (getLevelStars ? getLevelStars(previewLevel.id) : previewLevel.stars) ? 'text-yellow-400' : 'text-slate-600'}`} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Reward:</span>
+                      <span className="text-amber-400 font-bold">{previewLevel.coinReward} 🪙</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Energy Cost:</span>
+                      <span className="text-yellow-400 font-bold">20 ⚡</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Status:</span>
+                      <span className={`font-bold ${
+                        isLevelCompleted && isLevelCompleted(previewLevel.id) ? 'text-green-400' : 
+                        isLevelUnlocked(previewLevel, campaignLevels) ? 'text-blue-400' : 'text-red-400'
+                      }`}>
+                        {isLevelCompleted && isLevelCompleted(previewLevel.id) ? 'Completed' : 
+                         isLevelUnlocked(previewLevel, campaignLevels) ? 'Available' : 'Locked'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mini Board Preview */}
+              <div className="bg-slate-700/50 rounded-lg p-4">
+                <h4 className="font-semibold text-blue-400 mb-3 text-center">Battle Formation Preview</h4>
+                <div className="bg-gradient-to-br from-amber-200 to-amber-600 p-2 rounded-xl mx-auto max-w-xs">
+                  <div className="grid grid-cols-8 gap-0.5 bg-amber-900 p-1 rounded-lg">
+                    {Array(64).fill(null).map((_, index) => {
+                      const row = Math.floor(index / 8);
+                      const col = index % 8;
+                      const isLight = (row + col) % 2 === 0;
+                      
+                      // Full piece placement - show all pieces correctly
+                      let piece = null;
+                      
+                      // Pig pieces (top rows)
+                      if (row === 0) {
+                        if (col === 4) piece = <KingPig size={12} />; // King always center
+                        else if (col === 3 && previewLevel.pigPieces?.queen) piece = <QueenPig size={12} />;
+                        else if ((col === 2 || col === 5) && previewLevel.pigPieces?.bishops > (col === 2 ? 0 : 1)) piece = <ForemanPig size={12} />;
+                        else if ((col === 1 || col === 6) && previewLevel.pigPieces?.knights > (col === 1 ? 0 : 1)) piece = <NinjaPig size={12} />;
+                        else if ((col === 0 || col === 7) && previewLevel.pigPieces?.rooks > (col === 0 ? 0 : 1)) piece = <CorporalPig size={12} />;
+                      } else if (row === 1) {
+                        // Pig pawns - centered
+                        const pawnCount = previewLevel.pigPieces?.pawns || 0;
+                        const startCol = Math.floor((8 - pawnCount) / 2);
+                        if (col >= startCol && col < startCol + pawnCount) {
+                          piece = <RegularPig size={10} />;
+                        }
+                      }
+                      
+                      // Bird pieces (bottom rows)
+                      else if (row === 7) {
+                        if (col === 4) piece = <RedBird size={12} />; // King always center
+                        else if (col === 3 && previewLevel.birdPieces?.queen) piece = <Stella size={12} />;
+                        else if ((col === 2 || col === 5) && previewLevel.birdPieces?.bishops > (col === 2 ? 0 : 1)) piece = <WhiteBird size={12} />;
+                        else if ((col === 1 || col === 6) && previewLevel.birdPieces?.knights > (col === 1 ? 0 : 1)) piece = <BlackBird size={12} />;
+                        else if ((col === 0 || col === 7) && previewLevel.birdPieces?.rooks > (col === 0 ? 0 : 1)) piece = <YellowBird size={12} />;
+                      } else if (row === 6) {
+                        // Bird pawns - centered
+                        const pawnCount = previewLevel.birdPieces?.pawns || 0;
+                        const startCol = Math.floor((8 - pawnCount) / 2);
+                        if (col >= startCol && col < startCol + pawnCount) {
+                          piece = <BlueBird size={10} />;
+                        }
+                      }
+                      
+                      return (
+                        <div
+                          key={index}
+                          className={`aspect-square flex items-center justify-center ${
+                            isLight ? 'bg-amber-100' : 'bg-amber-800'
+                          }`}
+                        >
+                          {piece}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* Quick piece summary */}
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="text-center text-slate-300">
+                    � Your Army: {previewLevel.birdPieces?.pawns || 0} pawns + {(previewLevel.birdPieces?.rooks || 0) + (previewLevel.birdPieces?.knights || 0) + (previewLevel.birdPieces?.bishops || 0) + (previewLevel.birdPieces?.queen ? 1 : 0)} pieces
+                  </div>
+                  <div className="text-center text-slate-300">
+                    � Enemy Army: {previewLevel.pigPieces?.pawns || 0} pawns + {(previewLevel.pigPieces?.rooks || 0) + (previewLevel.pigPieces?.knights || 0) + (previewLevel.pigPieces?.bishops || 0) + (previewLevel.pigPieces?.queen ? 1 : 0)} pieces
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Action Buttons */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowPreview(false)}
+                className="bg-slate-700 hover:bg-slate-600 text-white py-3 px-6 rounded-lg transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              
+              {/* BIG PLAY BUTTON */}
+              {isLevelUnlocked(previewLevel, campaignLevels) ? (
+                <button
+                  onClick={() => {
+                    if (playerInventory.energy >= 20) {
+                      onSelectLevel(previewLevel.id, previewLevel);
+                      setShowPreview(false);
+                    } else {
+                      console.log('Not enough energy!');
+                    }
+                  }}
+                  disabled={playerInventory.energy < 20}
+                  className={`flex-1 py-4 px-8 rounded-lg transition-colors font-bold text-lg flex items-center justify-center gap-3 ${
+                    playerInventory.energy >= 20
+                      ? 'bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transform hover:scale-105'
+                      : 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
+                  <IoFlash className="w-6 h-6" />
+                  PLAY BATTLE
+                  <span className="text-sm">(-20 ⚡)</span>
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="flex-1 py-4 px-8 rounded-lg font-bold text-lg flex items-center justify-center gap-3 bg-red-800/50 text-red-300 cursor-not-allowed border border-red-600/50"
+                >
+                  <IoLockClosed className="w-6 h-6" />
+                  LOCKED
+                  <span className="text-sm">(Complete previous level)</span>
+                </button>
+              )}
+            </div>
+            
+            {/* Energy warning */}
+            {playerInventory.energy < 20 && isLevelUnlocked(previewLevel, campaignLevels) && (
+              <div className="mt-3 p-3 bg-red-900/30 border border-red-600/50 rounded-lg">
+                <p className="text-red-400 text-sm text-center">
+                  ⚠️ Not enough energy! You need 20 energy to start this battle.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

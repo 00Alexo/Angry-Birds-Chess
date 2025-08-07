@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { usePlayerInventory } from '../hooks/useGameData';
+import { usePlayerInventory, useCampaignProgress } from '../hooks/useGameData';
 import EnergyDisplay from '../components/EnergyDisplay';
 import EnergyPurchaseModal from '../components/EnergyPurchaseModal';
 import { IoArrowBack } from 'react-icons/io5';
@@ -15,6 +15,12 @@ const EnergyTestPage = ({ onBack }) => {
     spendEnergy,
     addCoins
   } = usePlayerInventory();
+  
+  const { 
+    completeLevelWithStars, 
+    isLevelCompleted, 
+    getLevelStars 
+  } = useCampaignProgress();
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [log, setLog] = useState([]);
 
@@ -55,6 +61,49 @@ const EnergyTestPage = ({ onBack }) => {
     if (window.confirm('🚨 RESET EVERYTHING? This will clear ALL progress including campaign levels and cannot be undone!')) {
       const success = await resetEverything();
       addToLog(success ? 'Everything reset! Page will reload...' : 'Failed to reset everything');
+    }
+  };
+
+  const handleCompleteLevel = async (levelId, coins) => {
+    if (completeLevelWithStars) {
+      await completeLevelWithStars(levelId, 3, coins); // Complete with 3 stars
+      addToLog(`Completed level ${levelId} with 3 stars and ${coins} coins!`);
+    }
+  };
+
+  const handleCompleteAllLevels = async () => {
+    if (window.confirm('Complete ALL campaign levels? This will unlock everything.')) {
+      const levelRewards = [50, 75, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000];
+      
+      for (let i = 1; i <= 13; i++) {
+        await handleCompleteLevel(i, levelRewards[i - 1]);
+      }
+      
+      // Add completion bonus
+      await addCoins(1000);
+      addToLog('🎉 CAMPAIGN COMPLETED! Added 1000 coin completion bonus!');
+    }
+  };
+
+  const handleTestCompletionBonus = async () => {
+    // Check if all levels are completed
+    const allCompleted = Array.from({length: 13}, (_, i) => i + 1).every(id => 
+      isLevelCompleted && isLevelCompleted(id)
+    );
+    
+    if (allCompleted) {
+      await addCoins(1000);
+      addToLog('🏆 Added 1000 coin completion bonus! (All levels already completed)');
+    } else {
+      addToLog('❌ Cannot add completion bonus - not all levels completed yet');
+    }
+  };
+
+  const handleUnlockLevel = async (levelId) => {
+    if (completeLevelWithStars && levelId > 1) {
+      // Complete the previous level to unlock this one
+      await completeLevelWithStars(levelId - 1, 1, 0); // Complete previous with 1 star, 0 coins (test only)
+      addToLog(`Unlocked level ${levelId} by completing level ${levelId - 1}`);
     }
   };
 
@@ -159,6 +208,100 @@ const EnergyTestPage = ({ onBack }) => {
           >
             🚨 RESET ALL
           </button>
+        </div>
+
+        {/* Campaign Testing Buttons */}
+        <div className="bg-purple-900/30 rounded-lg p-6 mb-8 border border-purple-600/30">
+          <h2 className="text-xl font-bold mb-4 text-purple-300">🧪 Campaign Reward Testing</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <button
+              onClick={handleCompleteAllLevels}
+              className="bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg transition-colors font-semibold"
+            >
+              🏆 Complete All Levels
+              <div className="text-xs text-purple-200 mt-1">Auto-awards all level coins + 1000 bonus</div>
+            </button>
+            
+            <button
+              onClick={handleTestCompletionBonus}
+              className="bg-amber-600 hover:bg-amber-700 px-4 py-3 rounded-lg transition-colors font-semibold"
+            >
+              💰 Test Completion Bonus
+              <div className="text-xs text-amber-200 mt-1">Adds 1000 coins if all levels done</div>
+            </button>
+            
+            <button
+              onClick={() => handleCompleteLevel(13, 1000)}
+              className="bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition-colors font-semibold"
+            >
+              👑 Complete Final Level
+              <div className="text-xs text-red-200 mt-1">Complete level 13 (1000 coins)</div>
+            </button>
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+            <h3 className="col-span-full text-lg font-semibold text-purple-200 mb-2">Quick Level Completion:</h3>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(levelId => (
+              <button
+                key={levelId}
+                onClick={() => {
+                  const rewards = [50, 75, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800];
+                  handleCompleteLevel(levelId, rewards[levelId - 1]);
+                }}
+                className={`px-3 py-2 rounded transition-colors text-sm font-medium ${
+                  isLevelCompleted && isLevelCompleted(levelId)
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : 'bg-slate-600 hover:bg-slate-700 text-white'
+                }`}
+              >
+                L{levelId} 
+                <div className="text-xs">
+                  {[50, 75, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800][levelId - 1]}🪙
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Campaign Status */}
+        <div className="bg-blue-900/30 rounded-lg p-6 mb-8 border border-blue-600/30">
+          <h2 className="text-xl font-bold mb-4 text-blue-300">📊 Campaign Status</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-green-400 font-bold text-2xl">
+                {Array.from({length: 13}, (_, i) => i + 1).filter(id => isLevelCompleted && isLevelCompleted(id)).length}/13
+              </div>
+              <div className="text-sm text-gray-300">Levels Completed</div>
+            </div>
+            <div>
+              <div className="text-yellow-400 font-bold text-2xl">
+                {Array.from({length: 13}, (_, i) => i + 1).reduce((total, id) => 
+                  total + (getLevelStars ? getLevelStars(id) : 0), 0)}/39
+              </div>
+              <div className="text-sm text-gray-300">Stars Earned</div>
+            </div>
+            <div>
+              <div className="text-purple-400 font-bold text-2xl">
+                {Array.from({length: 13}, (_, i) => i + 1).reduce((total, id) => {
+                  if (!isLevelCompleted || !isLevelCompleted(id)) return total;
+                  const rewards = [50, 75, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000];
+                  return total + rewards[id - 1];
+                }, 0).toLocaleString()}
+              </div>
+              <div className="text-sm text-gray-300">Level Coins Earned</div>
+            </div>
+            <div>
+              <div className={`font-bold text-2xl ${
+                Array.from({length: 13}, (_, i) => i + 1).every(id => isLevelCompleted && isLevelCompleted(id))
+                  ? 'text-amber-400' : 'text-gray-400'
+              }`}>
+                {Array.from({length: 13}, (_, i) => i + 1).every(id => isLevelCompleted && isLevelCompleted(id))
+                  ? '✅ 1000' : '❌ 0'}
+              </div>
+              <div className="text-sm text-gray-300">Completion Bonus</div>
+            </div>
+          </div>
         </div>
 
         {/* Activity Log */}

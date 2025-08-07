@@ -12,6 +12,7 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState('menu'); // Back to main menu as default
   const [selectedDifficulty, setSelectedDifficulty] = useState(null);
   const [selectedLevel, setSelectedLevel] = useState(null);
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
   
   // Check for testing route in URL
   React.useEffect(() => {
@@ -44,10 +45,17 @@ function App() {
       </div>
     );
   }
+  
+  const showNotification = (message, type = 'info') => {
+    setNotification({ show: true, message, type });
+    // Auto-hide notification after 4 seconds
+    setTimeout(() => {
+      setNotification({ show: false, message: '', type: 'info' });
+    }, 4000);
+  };
 
   const handleMultiPlayer = () => {
-    // TODO: Implement multiplayer game logic later
-    console.log('Multiplayer game clicked!');
+    showNotification(`Multiplayer is not available yet as the game is still in it's beta phase, but will be available soon with our own ELO system!`, `error`);
   };
 
   const handleSelectDifficulty = async (difficulty) => {
@@ -200,6 +208,37 @@ function App() {
 
   return (
     <div className="App">
+      {/* Notification Banner */}
+      {notification.show && (
+        <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md w-full mx-4 ${
+          notification.type === 'error' 
+            ? 'bg-gradient-to-r from-red-500 to-red-600' 
+            : notification.type === 'success'
+            ? 'bg-gradient-to-r from-green-500 to-green-600'
+            : 'bg-gradient-to-r from-blue-500 to-blue-600'
+        } text-white px-6 py-4 rounded-lg shadow-lg border-l-4 ${
+          notification.type === 'error' 
+            ? 'border-red-300' 
+            : notification.type === 'success'
+            ? 'border-green-300'
+            : 'border-blue-300'
+        } animate-slide-down backdrop-blur-sm`}>
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 text-xl">
+              {notification.type === 'error' ? '⚠️' : notification.type === 'success' ? '✅' : 'ℹ️'}
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium leading-relaxed">{notification.message}</p>
+            </div>
+            <button
+              onClick={() => setNotification({ show: false, message: '', type: 'info' })}
+              className="flex-shrink-0 text-white/80 hover:text-white transition-colors ml-2"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       {renderCurrentScreen()}
     </div>
   );

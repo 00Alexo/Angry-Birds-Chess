@@ -278,6 +278,33 @@ class GameDatabase {
       throw error;
     }
   }
+
+  // Campaign Completion Bonus Methods
+  async getCompletionBonusStatus() {
+    try {
+      const playerData = await this.getPlayerData();
+      return playerData.completionBonusAwarded || false;
+    } catch (error) {
+      console.error('Failed to get completion bonus status:', error);
+      return false;
+    }
+  }
+
+  async markCompletionBonusAwarded() {
+    try {
+      const playerData = await this.getPlayerData();
+      const updatedData = {
+        ...playerData,
+        completionBonusAwarded: true,
+        completionBonusDate: Date.now()
+      };
+      await this.savePlayerData(updatedData);
+      return true;
+    } catch (error) {
+      console.error('Failed to mark completion bonus awarded:', error);
+      return false;
+    }
+  }
 }
 
 // Create singleton instance

@@ -65,6 +65,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
   const [promotionData, setPromotionData] = useState(null);
   const [lastMove, setLastMove] = useState(null);
   const [coinAnimation, setCoinAnimation] = useState({ isAnimating: false, startAmount: 0, endAmount: 0, currentAmount: 0 });
+  const [premove, setPremove] = useState(null); // { fromRow, fromCol, toRow, toCol, specialMove, promotionType }
+  const [premoveHighlight, setPremoveHighlight] = useState(null); // Highlight premove squares
   const moveHistoryRef = useRef(null);
 
   // Check for check status after each move
@@ -239,16 +241,22 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     setPositionHistory(prev => [...prev, position]);
   };
 
-  // Calculate coin rewards based on difficulty
-  const calculateCoinReward = (difficulty) => {
-    const difficultyLower = difficulty?.toLowerCase();
+  // Calculate coin rewards from level data (new system)
+  const calculateCoinReward = () => {
+    // Use the level's specific coin reward, or fall back to difficulty-based for practice modes
+    if (levelData && levelData.coinReward) {
+      return levelData.coinReward;
+    }
+    
+    // Fallback for practice modes without specific level data
+    const difficultyLower = levelData?.difficulty?.toLowerCase();
     switch (difficultyLower) {
       case 'easy': return 25;
       case 'medium': return 50;
       case 'hard': return 100;
       case 'nightmare': return 250;
-      case 'impossible': return 150; // Same as nightmare
-      default: return 25; // Default to easy if unknown
+      case 'impossible': return 150;
+      default: return 25;
     }
   };
 
@@ -268,43 +276,133 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     const mainPieceSize = getPieceSize();
     const pawnSize = Math.max(40, mainPieceSize - 5); // Pawns also much larger
     
+    // Get piece configuration from level data or use default
+    const pieceConfig = levelData?.birdPieces ? {
+      birdPieces: levelData.birdPieces,
+      pigPieces: levelData.pigPieces
+    } : {
+      // Default full chess setup for practice modes
+      birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
+      pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
+    };
+    
     // Setup Pigs (Black pieces) - top rows
-    newBoard[0] = [
-      { type: 'rook', team: 'pigs', piece: <CorporalPig size={mainPieceSize} />, moved: false },
-      { type: 'knight', team: 'pigs', piece: <NinjaPig size={mainPieceSize} />, moved: false },
-      { type: 'bishop', team: 'pigs', piece: <ForemanPig size={mainPieceSize} />, moved: false },
-      { type: 'queen', team: 'pigs', piece: <QueenPig size={mainPieceSize} />, moved: false },
-      { type: 'king', team: 'pigs', piece: <KingPig size={mainPieceSize} />, moved: false },
-      { type: 'bishop', team: 'pigs', piece: <ForemanPig size={mainPieceSize} />, moved: false },
-      { type: 'knight', team: 'pigs', piece: <NinjaPig size={mainPieceSize} />, moved: false },
-      { type: 'rook', team: 'pigs', piece: <CorporalPig size={mainPieceSize} />, moved: false }
-    ];
+    setupPigPieces(newBoard, pieceConfig.pigPieces, mainPieceSize, pawnSize);
     
-    for (let i = 0; i < 8; i++) {
-      newBoard[1][i] = { type: 'pawn', team: 'pigs', piece: <RegularPig size={pawnSize} />, moved: false };
-    }
+    // Setup Birds (White pieces) - bottom rows  
+    setupBirdPieces(newBoard, pieceConfig.birdPieces, mainPieceSize, pawnSize);
 
-    // Setup Birds (White pieces) - bottom rows
-    newBoard[7] = [
-      { type: 'rook', team: 'birds', piece: <YellowBird size={mainPieceSize} />, moved: false }, // Chuck as Rook
-      { type: 'knight', team: 'birds', piece: <BlackBird size={mainPieceSize} />, moved: false }, // Bomb as Knight
-      { type: 'bishop', team: 'birds', piece: <WhiteBird size={mainPieceSize} />, moved: false }, // Matilda as Bishop
-      { type: 'queen', team: 'birds', piece: <Stella size={mainPieceSize} />, moved: false }, // Stella as Queen
-      { type: 'king', team: 'birds', piece: <RedBird size={mainPieceSize} />, moved: false }, // Red as King
-      { type: 'bishop', team: 'birds', piece: <WhiteBird size={mainPieceSize} />, moved: false }, // Matilda as Bishop
-      { type: 'knight', team: 'birds', piece: <BlackBird size={mainPieceSize} />, moved: false }, // Bomb as Knight
-      { type: 'rook', team: 'birds', piece: <YellowBird size={mainPieceSize} />, moved: false } // Chuck as Rook
-    ];
-    
-    for (let i = 0; i < 8; i++) {
-      newBoard[6][i] = { type: 'pawn', team: 'birds', piece: <BlueBird size={pawnSize} />, moved: false }; // Jak and Jim as Pawns
-    }
+    console.log('🎯 Final board state after initialization:');
+    console.log('Row 0 (Pigs):', newBoard[0].map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
+    console.log('Row 1 (Pig Pawns):', newBoard[1].map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
+    console.log('Row 6 (Bird Pawns):', newBoard[6].map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
+    console.log('Row 7 (Birds):', newBoard[7].map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
 
     setBoard(newBoard);
     setIsGameStarted(true);
     
     // Initialize position history
     savePositionToHistory(newBoard, 'birds');
+  };
+
+  const setupPigPieces = (board, pigConfig, mainSize, pawnSize) => {
+    console.log('🏗️ Setting up pig pieces with config:', pigConfig);
+    
+    // Setup pig back rank - Initialize all positions as null first
+    const backRank = Array(8).fill(null);
+    
+    // Always place king in center
+    const kingPos = 4;
+    backRank[kingPos] = { type: 'king', team: 'pigs', piece: <KingPig size={mainSize} />, moved: false };
+    console.log(`👑 Placed pig king at position ${kingPos}`);
+    
+    // Place queen if available
+    if (pigConfig.queen) {
+      backRank[3] = { type: 'queen', team: 'pigs', piece: <QueenPig size={mainSize} />, moved: false };
+      console.log('👸 Placed pig queen at position 3');
+    }
+    
+    // Place bishops
+    const bishopPositions = [2, 5];
+    for (let i = 0; i < Math.min(pigConfig.bishops || 0, 2); i++) {
+      backRank[bishopPositions[i]] = { type: 'bishop', team: 'pigs', piece: <ForemanPig size={mainSize} />, moved: false };
+      console.log(`♗ Placed pig bishop ${i + 1} at position ${bishopPositions[i]}`);
+    }
+    
+    // Place knights  
+    const knightPositions = [1, 6];
+    for (let i = 0; i < Math.min(pigConfig.knights || 0, 2); i++) {
+      backRank[knightPositions[i]] = { type: 'knight', team: 'pigs', piece: <NinjaPig size={mainSize} />, moved: false };
+      console.log(`♞ Placed pig knight ${i + 1} at position ${knightPositions[i]}`);
+    }
+    
+    // Place rooks
+    const rookPositions = [0, 7];
+    for (let i = 0; i < Math.min(pigConfig.rooks || 0, 2); i++) {
+      backRank[rookPositions[i]] = { type: 'rook', team: 'pigs', piece: <CorporalPig size={mainSize} />, moved: false };
+      console.log(`♖ Placed pig rook ${i + 1} at position ${rookPositions[i]}`);
+    }
+    
+    board[0] = backRank;
+    console.log('🏁 Final pig back rank:', backRank.map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
+    
+    // Setup pig pawns - centered based on count
+    const pawnCount = Math.min(pigConfig.pawns || 0, 8);
+    const startCol = Math.floor((8 - pawnCount) / 2);
+    for (let i = 0; i < pawnCount; i++) {
+      board[1][startCol + i] = { type: 'pawn', team: 'pigs', piece: <RegularPig size={pawnSize} />, moved: false };
+    }
+    console.log(`♟️ Placed ${pawnCount} pig pawns starting at column ${startCol}`);
+  };
+
+  const setupBirdPieces = (board, birdConfig, mainSize, pawnSize) => {
+    console.log('🐦 Setting up bird pieces with config:', birdConfig);
+    
+    // Setup bird back rank - Initialize all positions as null first
+    const backRank = Array(8).fill(null);
+    
+    // Always place king in center
+    const kingPos = 4;
+    backRank[kingPos] = { type: 'king', team: 'birds', piece: <RedBird size={mainSize} />, moved: false };
+    console.log(`👑 Placed bird king at position ${kingPos}`);
+    
+    // Place queen if available
+    if (birdConfig.queen) {
+      backRank[3] = { type: 'queen', team: 'birds', piece: <Stella size={mainSize} />, moved: false };
+      console.log('👸 Placed bird queen at position 3');
+    }
+    
+    // Place bishops
+    const bishopPositions = [2, 5];
+    for (let i = 0; i < Math.min(birdConfig.bishops || 0, 2); i++) {
+      backRank[bishopPositions[i]] = { type: 'bishop', team: 'birds', piece: <WhiteBird size={mainSize} />, moved: false };
+      console.log(`♗ Placed bird bishop ${i + 1} at position ${bishopPositions[i]}`);
+    }
+    
+    // Place knights
+    const knightPositions = [1, 6];
+    for (let i = 0; i < Math.min(birdConfig.knights || 0, 2); i++) {
+      backRank[knightPositions[i]] = { type: 'knight', team: 'birds', piece: <BlackBird size={mainSize} />, moved: false };
+      console.log(`♞ Placed bird knight ${i + 1} at position ${knightPositions[i]}`);
+    }
+    
+    // Place rooks
+    const rookPositions = [0, 7];
+    for (let i = 0; i < Math.min(birdConfig.rooks || 0, 2); i++) {
+      backRank[rookPositions[i]] = { type: 'rook', team: 'birds', piece: <YellowBird size={mainSize} />, moved: false };
+      console.log(`♖ Placed bird rook ${i + 1} at position ${rookPositions[i]}`);
+    }
+    
+    board[7] = backRank;
+    console.log('🏁 Final bird back rank:', backRank.map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
+    
+    // Setup bird pawns - centered based on count
+    const pawnCount = Math.min(birdConfig.pawns || 0, 8);
+    const startCol = Math.floor((8 - pawnCount) / 2);
+    for (let i = 0; i < pawnCount; i++) {
+      board[6][startCol + i] = { type: 'pawn', team: 'birds', piece: <BlueBird size={pawnSize} />, moved: false };
+    }
+    console.log(`♟️ Placed ${pawnCount} bird pawns starting at column ${startCol}`);
   };
 
   const isValidMove = (fromRow, fromCol, toRow, toCol) => {
@@ -319,6 +417,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     const piece = board[fromRow][fromCol];
     if (!piece) return [];
     
+    console.log(`🔍 Calculating moves for ${piece.type} at ${fromRow},${fromCol}`);
+    
     // Check all squares on the board
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
@@ -332,6 +432,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
       }
     }
     
+    console.log(`✅ Found ${moves.length} valid moves:`, moves);
     return moves;
   };
 
@@ -351,6 +452,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
 
   const executeMove = (fromRow, fromCol, toRow, toCol, specialMove = null, promotionType = 'queen') => {
     const piece = board[fromRow][fromCol];
+    console.log(`🎯 Executing move: ${piece?.type} from ${fromRow},${fromCol} to ${toRow},${toCol}`, { specialMove, piece });
+    
     const newBoard = board.map(r => [...r]);
     const capturedPiece = newBoard[toRow][toCol];
     let moveData = {
@@ -412,6 +515,23 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     
     setBoard(newBoard);
     
+    // Check if premove needs to be cancelled due to AI's move
+    if (premove) {
+      const { fromRow, fromCol } = premove;
+      
+      // Cancel premove if:
+      // 1. The piece at the premove's from position was captured/moved
+      // 2. The piece is no longer a bird piece (shouldn't happen, but safety check)
+      const premovePiece = newBoard[fromRow][fromCol];
+      if (!premovePiece || premovePiece.team !== 'birds') {
+        console.log('🚫 Premove cancelled - piece was captured or moved by AI');
+        setPremove(null);
+        setPremoveHighlight(null);
+        setSelectedSquare(null);
+        setPossibleMoves([]);
+      }
+    }
+    
     // Update move counters for 50-move rule
     const isPawnMoveOrCapture = piece.type === 'pawn' || capturedPiece !== null;
     if (isPawnMoveOrCapture) {
@@ -440,7 +560,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const baseCoins = calculateCoinReward();
           const coinsEarned = Math.floor(baseCoins / 2);
           const currentCoins = playerInventory?.coins || 0;
           
@@ -467,7 +587,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const baseCoins = calculateCoinReward();
           const coinsEarned = Math.floor(baseCoins / 2);
           const currentCoins = playerInventory?.coins || 0;
           
@@ -494,7 +614,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const baseCoins = calculateCoinReward();
           const coinsEarned = Math.floor(baseCoins / 2);
           const currentCoins = playerInventory?.coins || 0;
           
@@ -524,7 +644,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         
         // Award coins for winning and save level progress
         if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
-          const coinsEarned = calculateCoinReward(levelData.difficulty);
+          const coinsEarned = calculateCoinReward();
           const currentCoins = playerInventory?.coins || 0;
           
           // Start coin animation
@@ -547,7 +667,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward(levelData.difficulty);
+          const baseCoins = calculateCoinReward();
           const coinsEarned = Math.floor(baseCoins / 2);
           const currentCoins = playerInventory?.coins || 0;
           
@@ -603,10 +723,56 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
       
       return () => clearTimeout(aiDelay);
     }
-  }, [currentPlayer, gameStatus, board, aiInstance]);
+    
+    // Execute premove when it becomes player's turn
+    if (currentPlayer === 'birds' && gameStatus === 'playing' && !isAiThinking && premove) {
+      const { fromRow, fromCol, toRow, toCol, specialMove, promotionType } = premove;
+      
+      // Validate premove is still legal
+      if (aiInstance && board[fromRow] && board[fromRow][fromCol]) {
+        const piece = board[fromRow][fromCol];
+        if (piece && piece.team === 'birds') {
+          const moveValidation = aiInstance.isValidMoveWithSpecialRules(
+            board, fromRow, fromCol, toRow, toCol, lastMove, { positionHistory, fiftyMoveCounter }
+          );
+          
+          if (moveValidation.valid) {
+            console.log('🚀 Executing premove:', premove);
+            // Clear premove before executing
+            setPremove(null);
+            setPremoveHighlight(null);
+            
+            // Execute the premoved move
+            setTimeout(() => {
+              executeMove(fromRow, fromCol, toRow, toCol, specialMove || moveValidation.specialMove, promotionType);
+            }, 100);
+          } else {
+            console.log('❌ Premove invalid, clearing:', premove);
+            setPremove(null);
+            setPremoveHighlight(null);
+          }
+        } else {
+          // Piece no longer exists or wrong team
+          console.log('❌ Premove piece invalid, clearing:', premove);
+          setPremove(null);
+          setPremoveHighlight(null);
+        }
+      }
+    }
+  }, [currentPlayer, gameStatus, board, aiInstance, premove]);
 
   const handleDragStart = (e, row, col) => {
     const piece = board[row][col];
+    
+    // Allow dragging bird pieces during AI thinking (for premoves)
+    if (isAiThinking && piece && piece.team === 'birds') {
+      setDraggedPiece({ row, col, piece });
+      setSelectedSquare([row, col]);
+      setPossibleMoves(calculatePossibleMoves(row, col));
+      return;
+    }
+    
+    // Normal drag logic - only allow dragging current player's pieces
     if (!piece || piece.team !== currentPlayer) {
       e.preventDefault();
       return;
@@ -640,6 +806,35 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     }
 
     const piece = board[fromRow][fromCol];
+    
+    // Handle premoves during AI thinking
+    if (isAiThinking && piece && piece.team === 'birds') {
+      const moveValidation = aiInstance.isValidMoveWithSpecialRules(
+        board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
+      );
+      
+      if (moveValidation.valid) {
+        // Set premove
+        const premoveData = {
+          fromRow,
+          fromCol,
+          toRow: row,
+          toCol: col,
+          specialMove: moveValidation.special,
+          promotionType: moveValidation.special === 'promotion' ? 'queen' : null
+        };
+        
+        setPremove(premoveData);
+        setPremoveHighlight({ from: [fromRow, fromCol], to: [row, col] });
+        console.log('🚀 Premove set via drag:', premoveData);
+        
+        setSelectedSquare(null);
+        setPossibleMoves([]);
+      }
+      return;
+    }
+    
+    // Normal move logic
     if (piece && piece.team === currentPlayer) {
       // Check for special moves
       const moveValidation = aiInstance.isValidMoveWithSpecialRules(
@@ -671,6 +866,75 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
   const handleSquareClick = (row, col) => {
     if (gameStatus !== 'playing') return;
 
+    // Allow premoves whenever AI is thinking (regardless of whose "turn" it is)
+    if (isAiThinking) {
+      // Handle premove logic
+      if (selectedSquare) {
+        const [fromRow, fromCol] = selectedSquare;
+        
+        if (fromRow === row && fromCol === col) {
+          // Deselect if clicking the same square
+          setSelectedSquare(null);
+          setPossibleMoves([]);
+          setPremove(null);
+          setPremoveHighlight(null);
+          return;
+        }
+
+        const piece = board[fromRow][fromCol];
+        if (piece && piece.team === 'birds') { // Only birds can make premoves
+          // Validate premove (simulate what the move would be on current board)
+          const moveValidation = aiInstance.isValidMoveWithSpecialRules(
+            board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
+          );
+          
+          if (moveValidation.valid) {
+            // Set premove
+            const premoveData = {
+              fromRow,
+              fromCol,
+              toRow: row,
+              toCol: col,
+              specialMove: moveValidation.special,
+              promotionType: moveValidation.special === 'promotion' ? 'queen' : null // Default to queen for premove promotions
+            };
+            
+            setPremove(premoveData);
+            setPremoveHighlight({ from: [fromRow, fromCol], to: [row, col] });
+            console.log('📝 Premove set:', premoveData);
+            
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+          } else {
+            // Invalid premove, select new piece if it's a bird
+            const newPiece = board[row][col];
+            if (newPiece && newPiece.team === 'birds') {
+              setSelectedSquare([row, col]);
+              setPossibleMoves(calculatePossibleMoves(row, col));
+              setPremove(null);
+              setPremoveHighlight(null);
+            } else {
+              setSelectedSquare(null);
+              setPossibleMoves([]);
+              setPremove(null);
+              setPremoveHighlight(null);
+            }
+          }
+        }
+      } else {
+        // Select piece for premove (only birds)
+        const piece = board[row][col];
+        if (piece && piece.team === 'birds') {
+          setSelectedSquare([row, col]);
+          setPossibleMoves(calculatePossibleMoves(row, col));
+          setPremove(null);
+          setPremoveHighlight(null);
+        }
+      }
+      return;
+    }
+
+    // Normal move logic (when it's player's turn)
     if (selectedSquare) {
       const [fromRow, fromCol] = selectedSquare;
       
@@ -687,6 +951,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         const moveValidation = aiInstance.isValidMoveWithSpecialRules(
           board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
         );
+        
+        console.log(`🎯 Move validation for ${piece.type} from ${fromRow},${fromCol} to ${row},${col}:`, moveValidation);
         
         if (moveValidation.valid) {
           if (moveValidation.special === 'promotion') {
@@ -707,6 +973,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
           setSelectedSquare(null);
           setPossibleMoves([]);
         } else {
+          console.log(`❌ Invalid move: ${piece.type} from ${fromRow},${fromCol} to ${row},${col}`);
           // Select new piece if it belongs to current player
           const newPiece = board[row][col];
           if (newPiece && newPiece.team === currentPlayer) {
@@ -734,6 +1001,12 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     const isPossibleMove = possibleMoves.some(([moveRow, moveCol]) => moveRow === row && moveCol === col);
     const isCapture = isPossibleMove && board[row][col] !== null;
     const isDraggedOver = draggedPiece && isPossibleMove;
+    
+    // Check if this square is part of a premove
+    const isPremoveFrom = premoveHighlight && premoveHighlight.from && 
+                         premoveHighlight.from[0] === row && premoveHighlight.from[1] === col;
+    const isPremoveTo = premoveHighlight && premoveHighlight.to && 
+                       premoveHighlight.to[0] === row && premoveHighlight.to[1] === col;
     
     // Check if this square contains a king in check
     const piece = board[row][col];
@@ -763,10 +1036,19 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
       }
     }
     
+    // Premoves should have highest priority for blue coloring
+    if (isPremoveFrom) return 'bg-blue-400 border-blue-600 animate-pulse shadow-lg shadow-blue-500/50'; // Premove from square
+    if (isPremoveTo) return 'bg-blue-300 border-blue-500 animate-pulse shadow-lg shadow-blue-400/40'; // Premove to square
     if (isSelected) return 'bg-yellow-400 border-yellow-600';
     if (isKingInCheckSquare) return 'bg-red-500 border-red-700 animate-pulse shadow-lg shadow-red-500/50'; // Highlight king in check with glow
     if (isAttackingKing) return 'bg-orange-400 border-orange-600 animate-pulse'; // Highlight attacking pieces
     if (isCastlingMove) return 'bg-purple-400 border-purple-600 animate-pulse shadow-lg'; // Special highlight for castling
+    
+    // During AI thinking, show all possible moves in blue (premove style)
+    if (isAiThinking && isPossibleMove && isCapture) return 'bg-blue-400 border-blue-600 animate-pulse'; // Blue for premove captures
+    if (isAiThinking && isPossibleMove) return 'bg-blue-300 border-blue-500 animate-pulse'; // Blue for premove moves
+    
+    // Normal game colors (when not AI thinking)
     if (isCapture) return 'bg-red-400 border-red-600'; // Highlight capture moves in red
     if (isPossibleMove) return 'bg-green-400 border-green-600'; // Highlight possible moves in green
     if (isLight) return 'bg-amber-100 border-amber-200';
@@ -789,6 +1071,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     setIsAiThinking(false);
     setIsInCheck({ birds: false, pigs: false });
     setShowGameEndModal(false);
+    setPremove(null);
+    setPremoveHighlight(null);
     setGameResult(null);
     setPositionHistory([]);
     setFiftyMoveCounter(0);
@@ -829,22 +1113,6 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
           </div>
           
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Coin Display with Animation */}
-            <div className="bg-slate-800 rounded-lg p-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-lg">🪙</span>
-                <span className="text-yellow-400 font-bold text-sm">
-                  {coinAnimation.isAnimating ? 
-                    coinAnimation.currentAmount : 
-                    (playerInventory?.coins || 0)
-                  }
-                </span>
-                {coinAnimation.isAnimating && (
-                  <span className="text-green-400 animate-pulse text-xs">⬆️</span>
-                )}
-              </div>
-            </div>
-
             {/* Battle Status - Compact */}
             <div className="bg-slate-800 rounded-lg p-2 text-xs hidden sm:block">
               <div className="text-slate-400 mb-1">Status</div>
@@ -887,37 +1155,37 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
               </span>
             </div>
 
-            <div className="bg-gradient-to-br from-amber-200 to-amber-600 p-2 sm:p-3 rounded-2xl shadow-2xl flex-shrink-0">
-              <div className="grid grid-cols-8 gap-0.5 sm:gap-1 bg-amber-900 p-1 sm:p-2 rounded-xl">
-                {board.map((row, rowIndex) =>
-                  row.map((square, colIndex) => (
+            <div className="bg-gradient-to-br from-amber-200 to-amber-600 p-3 rounded-2xl shadow-2xl flex-shrink-0">
+              <div className="grid grid-cols-8 gap-1 bg-amber-900 p-2 rounded-xl w-full max-w-2xl mx-auto">
+                {Array(8).fill(null).map((_, rowIndex) =>
+                  Array(8).fill(null).map((_, colIndex) => (
                     <div
                       key={`${rowIndex}-${colIndex}`}
                       className={`
                         aspect-square border border-opacity-50 rounded cursor-pointer 
                         transition-all duration-200 hover:shadow-lg
                         flex items-center justify-center relative
-                        text-xs sm:text-sm
+                        w-full h-full min-w-[40px] min-h-[40px]
                         ${getSquareColor(rowIndex, colIndex)}
                       `}
                       onClick={() => handleSquareClick(rowIndex, colIndex)}
                       onDragOver={handleDragOver}
                       onDrop={(e) => handleDrop(e, rowIndex, colIndex)}
                     >
-                      {square && (
+                      {board[rowIndex] && board[rowIndex][colIndex] && (
                         <div 
                           className="transition-transform duration-200 hover:scale-110 w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
-                          draggable={square.team === currentPlayer}
+                          draggable={board[rowIndex][colIndex].team === currentPlayer || (isAiThinking && board[rowIndex][colIndex].team === 'birds')}
                           onDragStart={(e) => handleDragStart(e, rowIndex, colIndex)}
                           onDragEnd={handleDragEnd}
                         >
-                          {square.piece}
+                          {board[rowIndex][colIndex].piece}
                         </div>
                       )}
                       
                       {/* Castling indicator */}
-                      {!square && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
-                       selectedSquare && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
+                      {(!board[rowIndex] || !board[rowIndex][colIndex]) && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
+                       selectedSquare && board[selectedSquare[0]] && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
                        selectedSquare[1] === 4 && selectedSquare[0] === rowIndex && (colIndex === 2 || colIndex === 6) && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
                           <div className="text-2xl animate-bounce">🏰</div>
@@ -928,8 +1196,8 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                       )}
                       
                       {/* Regular move indicator */}
-                      {!square && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
-                       !(selectedSquare && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
+                      {(!board[rowIndex] || !board[rowIndex][colIndex]) && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
+                       !(selectedSquare && board[selectedSquare[0]] && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
                          selectedSquare[1] === 4 && selectedSquare[0] === rowIndex && (colIndex === 2 || colIndex === 6)) && (
                         <div className="w-4 h-4 bg-green-400 rounded-full opacity-80"></div>
                       )}
@@ -959,6 +1227,9 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                   {currentPlayer === 'pigs' && isAiThinking && (
                     <span className="text-sm text-slate-400 ml-2">(AI Thinking...)</span>
                   )}
+                  {premove && (
+                    <span className="text-sm text-blue-400 ml-2">(Premove Set)</span>
+                  )}
                 </span>
               </div>
               
@@ -986,6 +1257,26 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-400"></div>
                     <span className="text-sm text-slate-400">AI is calculating next move...</span>
                   </div>
+                  
+                  {/* Premove Cancel Button */}
+                  {premove && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setPremove(null);
+                          setPremoveHighlight(null);
+                          setSelectedSquare(null);
+                          setPossibleMoves([]);
+                        }}
+                        className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded transition-colors"
+                      >
+                        Cancel Premove
+                      </button>
+                      <span className="text-xs text-blue-400">
+                        {premove && `${String.fromCharCode(97 + premove.fromCol)}${8 - premove.fromRow} → ${String.fromCharCode(97 + premove.toCol)}${8 - premove.toRow}`}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
               
@@ -1274,7 +1565,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                       Mission Briefing
                     </h3>
                     <p className="text-sm text-slate-400 group-hover:text-slate-300 transition-colors duration-200">
-                      {calculateCoinReward(levelData?.difficulty)} coins • {levelData.difficulty} • Click for details
+                      {calculateCoinReward()} coins • {levelData.difficulty} • Click for details
                     </p>
                   </div>
                   <div className="text-slate-400 group-hover:text-amber-300 transition-all duration-200 text-2xl group-hover:scale-110">
@@ -1357,7 +1648,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                       <span className="text-2xl font-bold text-yellow-200">
                         +{coinAnimation.isAnimating ? 
                           (coinAnimation.currentAmount - coinAnimation.startAmount) : 
-                          calculateCoinReward(levelData?.difficulty)
+                          calculateCoinReward()
                         }
                       </span>
                       <span className="text-lg text-yellow-100">coins</span>
@@ -1404,7 +1695,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                       <span className="text-2xl font-bold text-yellow-200">
                         +{coinAnimation.isAnimating ? 
                           (coinAnimation.currentAmount - coinAnimation.startAmount) : 
-                          Math.floor(calculateCoinReward(levelData?.difficulty) / 2)
+                          Math.floor(calculateCoinReward() / 2)
                         }
                       </span>
                       <span className="text-lg text-yellow-100">coins</span>
@@ -1487,7 +1778,7 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
                   <h3 className="font-semibold text-green-400 mb-2">Rewards</h3>
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">🪙</span>
-                    <span className="text-xl font-bold text-yellow-400">{calculateCoinReward(levelData?.difficulty)}</span>
+                    <span className="text-xl font-bold text-yellow-400">{calculateCoinReward()}</span>
                     <span className="text-slate-300">coins</span>
                   </div>
                 </div>
