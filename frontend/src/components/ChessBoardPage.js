@@ -10,7 +10,7 @@ import { HardAI } from './ai/HardAI.js';
 import { NightmareAI } from './ai/NightmareAI.js';
 import { ImpossibleAI } from './ai/ImpossibleAI.js';
 
-const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars, selectedTheme = 'default' }) => {
+const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars, selectedTheme = 'default' }) => {
   // Board theme definitions
   const boardThemes = {
     default: {
@@ -134,13 +134,14 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
         
         if (currentStep >= steps) {
           clearInterval(interval);
-          // Actually add the coins to inventory after animation completes
-          if (addCoins) {
-            const coinsToAdd = coinAnimation.endAmount - coinAnimation.startAmount;
-            addCoins(coinsToAdd);
-          }
+          // DON'T add coins here - they should already be added when the level was completed
+          // if (addCoins) {
+          //   const coinsToAdd = coinAnimation.endAmount - coinAnimation.startAmount;
+          //   addCoins(coinsToAdd);
+          // }
           // Stop animation to prevent infinite loop
           setCoinAnimation(prev => ({ ...prev, isAnimating: false }));
+          console.log("💰 Coin animation completed - NOT calling addCoins to prevent restart");
         }
       }, stepDuration);
       
@@ -675,42 +676,88 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
             currentAmount: currentCoins
           });
           
-          completeLevelWithStars(levelData.id, 3, coinsEarned).then((completionResult) => {
-            console.log(`🏆 Victory! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
-            
-            // Check if completion bonus was awarded
-            if (completionResult && completionResult.bonusAwarded) {
-              console.log(`🎉 BONUS! Campaign completion bonus: +${completionResult.bonusAmount} coins!`);
+          // Complete level using campaign manager directly
+          (async () => {
+            try {
+              const { default: campaignManager } = await import('../utils/campaignManager');
+              const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned);
+              console.log(`� Level ${levelData.id} completed via CampaignManager:`, result);
+            } catch (error) {
+              console.error(`❌ Failed to complete level ${levelData.id}:`, error);
             }
-          });
+          })();
         }
         
-        setTimeout(() => setShowGameEndModal(true), 500); // Small delay for dramatic effect
+        setTimeout(() => {
+          console.log("🎉 Setting showGameEndModal to true - victory screen should appear");
+          setShowGameEndModal(true);
+        }, 500); // Small delay for dramatic effect
         console.log(`Checkmate! ${currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'} win!`);
       } else if (aiInstance && aiInstance.getAllPossibleMoves(newBoard, newCurrentPlayer, lastMove, { positionHistory, fiftyMoveCounter }).length === 0) {
-        setGameStatus('stalemate');
-        setGameResult('draw');
+        // No moves available - check if it's stalemate (king not in check) or missed checkmate
+        const isKingInCheck = aiInstance.isKingInCheck(newBoard, newCurrentPlayer);
         
-        // Award partial coins for draw
-        if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward();
-          const coinsEarned = Math.floor(baseCoins / 2);
-          const currentCoins = playerInventory?.coins || 0;
+        if (!isKingInCheck) {
+          // True stalemate - no moves and king not in check
+          setGameStatus('stalemate');
+          setGameResult('draw');
           
-          // Start coin animation
-          setCoinAnimation({
-            isAnimating: true,
-            startAmount: currentCoins,
-            endAmount: currentCoins + coinsEarned,
-            currentAmount: currentCoins
-          });
+          // Award partial coins for draw but DON'T complete the level
+          if (levelData && addCoins) {
+            const baseCoins = calculateCoinReward();
+            const coinsEarned = Math.floor(baseCoins / 2);
+            const currentCoins = playerInventory?.coins || 0;
+            
+            // Start coin animation
+            setCoinAnimation({
+              isAnimating: true,
+              startAmount: currentCoins,
+              endAmount: currentCoins + coinsEarned,
+              currentAmount: currentCoins
+            });
+            
+            // Only add coins, don't complete level - stalemate doesn't count as a campaign win
+            addCoins(coinsEarned);
+            console.log(`🤝 Stalemate! Earned ${coinsEarned} coins but level not completed (${levelData.difficulty} difficulty)!`);
+          }
           
-          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
-          console.log(`🤝 Draw! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+          setTimeout(() => setShowGameEndModal(true), 500);
+          console.log('True stalemate - King not in check but no moves available!');
+        } else {
+          // This should be checkmate but wasn't caught above - treat as checkmate
+          setGameStatus('checkmate');
+          const winner = currentPlayer;
+          const isPlayerWin = winner === 'birds';
+          setGameResult(isPlayerWin ? 'win' : 'loss');
+          
+          // Award coins for winning if player won
+          if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
+            const coinsEarned = calculateCoinReward();
+            const currentCoins = playerInventory?.coins || 0;
+            
+            // Start coin animation
+            setCoinAnimation({
+              isAnimating: true,
+              startAmount: currentCoins,
+              endAmount: currentCoins + coinsEarned,
+              currentAmount: currentCoins
+            });
+            
+            // Complete level using campaign manager directly
+            (async () => {
+              try {
+                const { default: campaignManager } = await import('../utils/campaignManager');
+                const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned);
+                console.log(`🏆 Level ${levelData.id} completed via CampaignManager (missed checkmate):`, result);
+              } catch (error) {
+                console.error(`❌ Failed to complete level ${levelData.id}:`, error);
+              }
+            })();
+          }
+          
+          console.log('Missed checkmate case - no moves and king in check, treating as checkmate');
+          setTimeout(() => setShowGameEndModal(true), 500);
         }
-        
-        setTimeout(() => setShowGameEndModal(true), 500);
-        console.log('Stalemate!');
       }
       
       // Check if the move resulted in check
@@ -1084,7 +1131,25 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
     return theme.dark;
   };
 
+  // Check if there's a next level available
+  const hasNextLevel = () => {
+    if (!levelData || !levelData.id) return false;
+    // Campaign has 13 levels total
+    return levelData.id < 13;
+  };
+
+  // Handle next level button click
+  const handleNextLevel = () => {
+    if (onNextLevel && hasNextLevel()) {
+      setShowGameEndModal(false);
+      onNextLevel();
+    }
+  };
+
   const resetGame = () => {
+    console.log("🔄 RESETGAME CALLED! This might be causing the auto-restart bug!");
+    console.trace("Stack trace for resetGame call:");
+    
     if (moveTimer) {
       clearInterval(moveTimer);
       setMoveTimer(null);
@@ -1738,22 +1803,35 @@ const ChessBoardPage = ({ onBack, levelData, playerInventory, spendEnergy, addCo
               )}
 
               {/* Action Buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowGameEndModal(false);
-                    resetGame();
-                  }}
-                  className="flex-1 bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold backdrop-blur-sm border border-white/30 hover:scale-105"
-                >
-                  Play Again
-                </button>
-                <button
-                  onClick={onBack}
-                  className="flex-1 bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold backdrop-blur-sm border border-white/30 hover:scale-105"
-                >
-                  Back to Menu
-                </button>
+              <div className="flex flex-col gap-3">
+                {/* Show Next Level button only on win and if next level exists */}
+                {gameResult === 'win' && hasNextLevel() && onNextLevel && (
+                  <button
+                    onClick={handleNextLevel}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold shadow-lg hover:shadow-xl hover:scale-105 border border-green-400"
+                  >
+                    Continue Campaign →
+                  </button>
+                )}
+                
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowGameEndModal(false);
+                      resetGame();
+                    }}
+                    className="flex-1 bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold backdrop-blur-sm border border-white/30 hover:scale-105"
+                  >
+                    Play Again
+                  </button>
+                  
+                  <button
+                    onClick={onBack}
+                    className="flex-1 bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-xl transition-all duration-200 font-semibold backdrop-blur-sm border border-white/30 hover:scale-105"
+                  >
+                    Back to Menu
+                  </button>
+                </div>
               </div>
             </div>
           </div>

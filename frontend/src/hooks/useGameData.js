@@ -1,489 +1,297 @@
 import { useState, useEffect, useCallback } from 'react';
-import gameDB from '../utils/database';
+import serverGameDB from '../utils/serverDatabase';
+import apiService from '../services/apiService';
+import { useAuth } from '../contexts/AuthContext';
 
-  // Custom hook for managing player inventory with IndexedDB persistence
 export const usePlayerInventory = () => {
+  const { user, isAuthenticated } = useAuth();
   const [playerInventory, setPlayerInventory] = useState({
     coins: 0,
     energy: 100,
     maxEnergy: 100,
-    lastEnergyUpdate: Date.now()
+    lastEnergyUpdate: Date.now(),
+    totalEnergyPurchased: 0,
+    gamesPlayed: 0,
+    totalCoinsEarned: 0,
+    levelSkipTokens: 0,
+    completionBonusAwarded: false,
+    selectedTheme: 'default',
+    coinMultiplier: null,
+    energyRegenBoost: null,
+    ownedItems: {},
+    shopPurchases: {},
   });
-
   const [isLoading, setIsLoading] = useState(true);
   const [timeUntilNextEnergy, setTimeUntilNextEnergy] = useState(0);
 
-  // Refresh player data (useful when completion bonus is awarded)
-  const refreshPlayerData = useCallback(async () => {
-    try {
-      const updatedData = await gameDB.regenerateEnergy();
-      setPlayerInventory({
-        coins: updatedData.coins,
-        energy: updatedData.energy,
-        maxEnergy: updatedData.maxEnergy,
-        lastEnergyUpdate: updatedData.lastEnergyUpdate,
-        totalEnergyPurchased: updatedData.totalEnergyPurchased || 0,
-        gamesPlayed: updatedData.gamesPlayed || 0,
-        totalCoinsEarned: updatedData.totalCoinsEarned || 0,
-        // Include shop items
-        levelSkipTokens: updatedData.levelSkipTokens || 0,
-        coinMultiplier: updatedData.coinMultiplier || null,
-        energyRegenBoost: updatedData.energyRegenBoost || null,
-        ownedItems: updatedData.ownedItems || {},
-        shopPurchases: updatedData.shopPurchases || {},
-        selectedTheme: updatedData.selectedTheme || 'default'
-      });
-    } catch (error) {
-      console.error('Failed to refresh player data:', error);
+  // Load player data from server
+  const loadPlayerData = useCallback(async () => {
+    if (!isAuthenticated) {
+      setIsLoading(false);
+      return;
     }
-  }, []);
 
-  // Initialize database and load player data
-  useEffect(() => {
-    const initializeDatabase = async () => {
-      try {
-        await gameDB.init();
-        // Regenerate energy based on time passed
-        const updatedData = await gameDB.regenerateEnergy();
+    try {
+      setIsLoading(true);
+      
+      // Get fresh user data directly from API
+      const response = await apiService.getCurrentUser();
+      
+      if (response.user && response.user.playerData) {
+        setPlayerInventory(response.user.playerData);
+        setTimeUntilNextEnergy(response.user.timeUntilNextEnergy || 0);
+      } else {
+        // Fallback to server database if user data doesn't include player data
+        const playerData = await serverGameDB.getPlayerData();
+        setPlayerInventory(playerData);
         
-        setPlayerInventory({
-          coins: updatedData.coins,
-          energy: updatedData.energy,
-          maxEnergy: updatedData.maxEnergy,
-          lastEnergyUpdate: updatedData.lastEnergyUpdate,
-          totalEnergyPurchased: updatedData.totalEnergyPurchased || 0,
-          gamesPlayed: updatedData.gamesPlayed || 0,
-          totalCoinsEarned: updatedData.totalCoinsEarned || 0,
-          // Include shop items
-          levelSkipTokens: updatedData.levelSkipTokens || 0,
-          coinMultiplier: updatedData.coinMultiplier || null,
-          energyRegenBoost: updatedData.energyRegenBoost || null,
-          ownedItems: updatedData.ownedItems || {},
-          shopPurchases: updatedData.shopPurchases || {},
-          selectedTheme: updatedData.selectedTheme || 'default'
-        });
-
-        // Get time until next energy regeneration
-        const nextEnergyTime = await gameDB.getTimeUntilNextEnergy();
-        setTimeUntilNextEnergy(nextEnergyTime);
-      } catch (error) {
-        console.error('Failed to initialize database:', error);
-      } finally {
-        setIsLoading(false);
+        const timeUntilNext = await serverGameDB.getTimeUntilNextEnergy();
+        setTimeUntilNextEnergy(timeUntilNext);
       }
-    };
-
-    initializeDatabase();
-
-    // Listen for campaign completion events to refresh player data
-    const handleCampaignCompleted = () => {
-      console.log('🎉 Campaign completion event received, refreshing player data...');
-      refreshPlayerData();
-    };
-
-    const handleForceRefresh = () => {
-      console.log('🔄 Force refresh event received, refreshing player data...');
-      refreshPlayerData();
-    };
-
-    window.addEventListener('campaignCompleted', handleCampaignCompleted);
-    window.addEventListener('forceRefreshInventory', handleForceRefresh);
-    
-    return () => {
-      window.removeEventListener('campaignCompleted', handleCampaignCompleted);
-      window.removeEventListener('forceRefreshInventory', handleForceRefresh);
-    };
-  }, [refreshPlayerData]);
-
-  // Auto-regenerate energy and update countdown
-  useEffect(() => {
-    const energyTimer = setInterval(async () => {
-      try {
-        const updatedData = await gameDB.regenerateEnergyWithBoost();
-        setPlayerInventory(prev => ({
-          ...prev,
-          energy: updatedData.energy,
-          maxEnergy: updatedData.maxEnergy,
-          lastEnergyUpdate: updatedData.lastEnergyUpdate,
-          energyRegenBoost: updatedData.energyRegenBoost
-        }));
-
-        // Update countdown timer
-        const nextEnergyTime = await gameDB.getTimeUntilNextEnergy();
-        setTimeUntilNextEnergy(nextEnergyTime);
-      } catch (error) {
-        console.error('Failed to regenerate energy:', error);
-      }
-    }, 1000); // Check every second for smooth countdown
-
-    return () => clearInterval(energyTimer);
-  }, []);
-
-  // Save inventory to database whenever it changes
-  const saveInventory = useCallback(async (newInventory) => {
-    try {
-      await gameDB.savePlayerData(newInventory);
-      setPlayerInventory(newInventory);
     } catch (error) {
-      console.error('Failed to save inventory:', error);
+      console.error('Failed to load player data:', error);
+      // Use default data on error
+      setPlayerInventory(serverGameDB.getDefaultPlayerData());
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
+
+  // Load data on mount and when auth changes
+  useEffect(() => {
+    loadPlayerData();
+  }, [loadPlayerData]);
+
+  // Energy regeneration timer with local countdown
+  useEffect(() => {
+    if (!isAuthenticated || playerInventory.energy >= playerInventory.maxEnergy) return;
+
+    // Server sync interval - check server every 5 seconds
+    const serverInterval = setInterval(async () => {
+      try {
+        const regeneratedData = await serverGameDB.regenerateEnergy();
+        setPlayerInventory(regeneratedData);
+        
+        const timeUntilNext = await serverGameDB.getTimeUntilNextEnergy();
+        setTimeUntilNextEnergy(timeUntilNext);
+      } catch (error) {
+        console.error('Energy regeneration failed:', error);
+      }
+    }, 5000);
+
+    // Local countdown timer - update display every second
+    const countdownInterval = setInterval(() => {
+      setTimeUntilNextEnergy(prev => {
+        if (prev <= 1000) { // Less than 1 second left
+          return 0;
+        }
+        return prev - 1000; // Subtract 1 second
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(serverInterval);
+      clearInterval(countdownInterval);
+    };
+  }, [isAuthenticated, playerInventory.energy, playerInventory.maxEnergy]);
+
+  // Refresh player data
+  const refreshPlayerData = useCallback(async () => {
+    return await loadPlayerData();
+  }, [loadPlayerData]);
 
   // Add coins
   const addCoins = useCallback(async (amount) => {
-    const currentCoins = playerInventory.coins || 0;
-    const currentTotalEarned = playerInventory.totalCoinsEarned || 0;
-    const coinsToAdd = isNaN(amount) ? 0 : Math.max(0, Math.floor(amount));
+    if (!isAuthenticated) return false;
     
-    const newInventory = {
-      ...playerInventory,
-      coins: Math.max(0, currentCoins + coinsToAdd),
-      totalCoinsEarned: Math.max(0, currentTotalEarned + coinsToAdd)
-    };
-    
-    console.log('💰 Adding coins:', {
-      currentCoins,
-      coinsToAdd,
-      newCoins: newInventory.coins
-    });
-    
-    await saveInventory(newInventory);
-  }, [playerInventory, saveInventory]);
+    try {
+      const result = await serverGameDB.addCoins(amount);
+      await refreshPlayerData(); // Refresh to get updated data
+      return result;
+    } catch (error) {
+      console.error('Failed to add coins:', error);
+      return false;
+    }
+  }, [isAuthenticated, refreshPlayerData]);
 
   // Spend energy
   const spendEnergy = useCallback(async (amount) => {
-    const currentEnergy = playerInventory.energy || 0;
-    const energyToSpend = isNaN(amount) ? 0 : Math.max(0, Math.floor(amount));
+    if (!isAuthenticated) return false;
     
-    if (currentEnergy >= energyToSpend) {
-      const newInventory = {
-        ...playerInventory,
-        energy: Math.max(0, currentEnergy - energyToSpend),
-        lastEnergyUpdate: Date.now(),
-        gamesPlayed: Math.max(0, (playerInventory.gamesPlayed || 0) + 1)
-      };
-      await saveInventory(newInventory);
-      return true; // Successfully spent energy
-    }
-    return false; // Not enough energy
-  }, [playerInventory, saveInventory]);
-
-  // Purchase energy with coins
-  const purchaseEnergy = useCallback(async (energyAmount) => {
     try {
-      const result = await gameDB.purchaseEnergy(energyAmount, 10); // 10 coins per energy
-      setPlayerInventory(result.newPlayerData);
-      return {
-        success: true,
-        message: `Purchased ${result.energyGained} energy for ${result.coinsSpent} coins!`,
-        ...result
-      };
+      const result = await serverGameDB.spendEnergy(amount);
+      await refreshPlayerData(); // Refresh to get updated data
+      return result;
     } catch (error) {
-      return {
-        success: false,
-        message: error.message
-      };
+      console.error('Failed to spend energy:', error);
+      return false;
     }
-  }, []);
+  }, [isAuthenticated, refreshPlayerData]);
 
-  // Add energy (for testing or special rewards)
-  const addEnergy = useCallback(async (amount) => {
-    const currentEnergy = playerInventory.energy || 0;
-    const maxEnergy = playerInventory.maxEnergy || 100;
-    const energyToAdd = isNaN(amount) ? 0 : Math.max(0, Math.floor(amount));
+  // Purchase energy
+  const purchaseEnergy = useCallback(async (energyAmount, costPerEnergy = 3) => {
+    if (!isAuthenticated) return { success: false, message: 'Not authenticated' };
     
-    const newEnergy = Math.min(currentEnergy + energyToAdd, maxEnergy);
-    const newInventory = {
-      ...playerInventory,
-      energy: newEnergy,
-      lastEnergyUpdate: Date.now()
-    };
-    await saveInventory(newInventory);
-  }, [playerInventory, saveInventory]);
-
-  // Reset progress (for development/testing)
-  const resetProgress = useCallback(async () => {
     try {
-      const freshData = await gameDB.resetToFreshStart();
-      setPlayerInventory(freshData);
-      setTimeUntilNextEnergy(0);
+      const result = await serverGameDB.purchaseEnergy(energyAmount, costPerEnergy);
+      await refreshPlayerData(); // Refresh to get updated data
+      return { success: true, ...result };
+    } catch (error) {
+      console.error('Failed to purchase energy:', error);
+      return { success: false, message: error.message };
+    }
+  }, [isAuthenticated, refreshPlayerData]);
+
+  // Purchase shop item
+  const purchaseShopItem = useCallback(async (itemId, itemPrice, itemData = {}) => {
+    if (!isAuthenticated) return { success: false, message: 'Not authenticated' };
+    
+    try {
+      const result = await serverGameDB.purchaseShopItem(itemId, itemPrice, itemData);
+      await refreshPlayerData(); // Refresh to get updated data
+      return result;
+    } catch (error) {
+      console.error('Failed to purchase shop item:', error);
+      return { success: false, message: error.message };
+    }
+  }, [isAuthenticated, refreshPlayerData]);
+
+  // Get daily deals
+  const getDailyDeals = useCallback(async () => {
+    if (!isAuthenticated) return [];
+    
+    try {
+      return await serverGameDB.getDailyDeals();
+    } catch (error) {
+      console.error('Failed to get daily deals:', error);
+      return [];
+    }
+  }, [isAuthenticated]);
+
+  // Save selected theme
+  const saveSelectedTheme = useCallback(async (themeId) => {
+    if (!isAuthenticated) return false;
+    
+    try {
+      const result = await serverGameDB.saveSelectedTheme(themeId);
+      await refreshPlayerData(); // Refresh to get updated data
+      return result;
+    } catch (error) {
+      console.error('Failed to save selected theme:', error);
+      return false;
+    }
+  }, [isAuthenticated, refreshPlayerData]);
+
+  // Get selected theme
+  const getSelectedTheme = useCallback(async () => {
+    if (!isAuthenticated) return 'default';
+    
+    try {
+      return await serverGameDB.getSelectedTheme();
+    } catch (error) {
+      console.error('Failed to get selected theme:', error);
+      return 'default';
+    }
+  }, [isAuthenticated]);
+
+  // Reset progress
+  const resetProgress = useCallback(async () => {
+    if (!isAuthenticated) return false;
+    
+    try {
+      const result = await serverGameDB.resetEverything();
+      setPlayerInventory(result);
       return true;
     } catch (error) {
       console.error('Failed to reset progress:', error);
       return false;
     }
-  }, []);
-
-  // Complete reset including campaign progress
-  const resetEverything = useCallback(async () => {
-    try {
-      await gameDB.resetEverything();
-      return true;
-    } catch (error) {
-      console.error('Failed to reset everything:', error);
-      return false;
-    }
-  }, []);
-
-  // Shop functionality
-  const purchaseShopItem = useCallback(async (itemId, itemPrice, itemData = {}) => {
-    try {
-      const result = await gameDB.purchaseShopItem(itemId, itemPrice, itemData);
-      if (result.success) {
-        setPlayerInventory(result.newPlayerData);
-      }
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        message: error.message
-      };
-    }
-  }, []);
-
-  const getDailyDeals = useCallback(async () => {
-    try {
-      return await gameDB.getDailyDeals();
-    } catch (error) {
-      console.error('Failed to get daily deals:', error);
-      return [];
-    }
-  }, []);
-
-  // Fix corrupted data (NaN coins, etc.)
-  const fixCorruptedData = useCallback(async () => {
-    try {
-      const result = await gameDB.fixCorruptedData();
-      if (result.fixed) {
-        setPlayerInventory(result.data);
-        console.log('✅ Corrupted data fixed and inventory refreshed!');
-      }
-      return result;
-    } catch (error) {
-      console.error('Failed to fix corrupted data:', error);
-      return { fixed: false, error: error.message };
-    }
-  }, []);
-
-  // Theme management
-  const saveSelectedTheme = useCallback(async (themeId) => {
-    try {
-      const success = await gameDB.saveSelectedTheme(themeId);
-      if (success) {
-        // Update local inventory to include the theme
-        setPlayerInventory(prev => ({
-          ...prev,
-          selectedTheme: themeId
-        }));
-      }
-      return success;
-    } catch (error) {
-      console.error('Failed to save selected theme:', error);
-      return false;
-    }
-  }, []);
-
-  const getSelectedTheme = useCallback(async () => {
-    try {
-      return await gameDB.getSelectedTheme();
-    } catch (error) {
-      console.error('Failed to get selected theme:', error);
-      return 'default';
-    }
-  }, []);
+  }, [isAuthenticated]);
 
   return {
     playerInventory,
     isLoading,
-    timeUntilNextEnergy,
     addCoins,
     spendEnergy,
-    addEnergy,
     purchaseEnergy,
     resetProgress,
-    resetEverything,
-    saveInventory,
+    timeUntilNextEnergy,
     refreshPlayerData,
     purchaseShopItem,
     getDailyDeals,
-    fixCorruptedData,
     saveSelectedTheme,
     getSelectedTheme
   };
 };
 
-// Custom hook for managing campaign progress
 export const useCampaignProgress = () => {
-  const [levelProgress, setLevelProgress] = useState({});
+  const { isAuthenticated } = useAuth();
+  const [campaignProgress, setCampaignProgress] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load all level progress on mount
-  useEffect(() => {
-    const loadProgress = async () => {
-      try {
-        await gameDB.init();
-        const allProgress = await gameDB.getAllLevelProgress();
-        
-        const progressMap = {};
-        allProgress.forEach(level => {
-          progressMap[level.levelId] = level;
-        });
-        
-        setLevelProgress(progressMap);
-      } catch (error) {
-        console.error('Failed to load campaign progress:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Load campaign progress using the simple campaign manager
+  const loadCampaignProgress = useCallback(async () => {
+    if (!isAuthenticated) {
+      setIsLoading(false);
+      return;
+    }
 
-    loadProgress();
-  }, []);
-
-  // Save level completion
-  const completeLevelWithStars = useCallback(async (levelId, stars, coinsEarned) => {
     try {
-      const progressData = {
-        completed: true,
-        stars: stars,
-        coinsEarned: coinsEarned,
-        completedAt: Date.now()
-      };
-
-      await gameDB.saveLevelProgress(levelId, progressData);
-      
-      setLevelProgress(prev => ({
-        ...prev,
-        [levelId]: { levelId, ...progressData }
-      }));
-
-      // Check for coin multiplier and apply it
-      const playerData = await gameDB.getPlayerData();
-      let finalCoins = coinsEarned;
-      let multiplierUsed = false;
-
-      if (playerData.coinMultiplier && playerData.coinMultiplier.active && playerData.coinMultiplier.usesRemaining > 0) {
-        finalCoins = coinsEarned * playerData.coinMultiplier.multiplier;
-        multiplierUsed = true;
-        
-        // Update coin multiplier uses
-        const updatedMultiplier = {
-          ...playerData.coinMultiplier,
-          usesRemaining: playerData.coinMultiplier.usesRemaining - 1
-        };
-        
-        // Remove multiplier if no uses left
-        if (updatedMultiplier.usesRemaining <= 0) {
-          updatedMultiplier.active = false;
-        }
-        
-        const updatedPlayerData = {
-          ...playerData,
-          coins: playerData.coins + finalCoins,
-          coinMultiplier: updatedMultiplier
-        };
-        
-        await gameDB.savePlayerData(updatedPlayerData);
-        
-        console.log(`🎉 Coin Multiplier Applied! ${coinsEarned} → ${finalCoins} coins (${playerData.coinMultiplier.usesRemaining - 1} uses left)`);
-      } else {
-        // No multiplier, add coins normally
-        const updatedPlayerData = {
-          ...playerData,
-          coins: playerData.coins + finalCoins
-        };
-        await gameDB.savePlayerData(updatedPlayerData);
-      }
-
-      // Dispatch coin multiplier notification if used
-      if (multiplierUsed) {
-        window.dispatchEvent(new CustomEvent('coinMultiplierUsed', {
-          detail: { 
-            originalCoins: coinsEarned, 
-            finalCoins: finalCoins,
-            usesLeft: playerData.coinMultiplier.usesRemaining - 1
-          }
-        }));
-      }
-
-      // Check if all 13 levels are now completed for completion bonus
-      const currentProgress = { ...levelProgress, [levelId]: { levelId, ...progressData } };
-      const allLevelsCompleted = Array.from({length: 13}, (_, i) => i + 1)
-        .every(id => currentProgress[id]?.completed);
-      
-      console.log(`🔍 Level ${levelId} completed. All levels completed: ${allLevelsCompleted}`);
-      console.log('📊 Current progress:', currentProgress);
-      console.log('📊 Level completion status:', Array.from({length: 13}, (_, i) => i + 1).map(id => 
-        `Level ${id}: ${currentProgress[id]?.completed ? '✅' : '❌'}`
-      ));
-      
-      if (allLevelsCompleted) {
-        console.log('🎯 ALL LEVELS COMPLETED! Checking completion bonus status...');
-        
-        // Check if completion bonus has already been awarded
-        const completionBonusAwarded = await gameDB.getCompletionBonusStatus();
-        console.log(`🎯 Completion bonus already awarded: ${completionBonusAwarded}`);
-        
-        if (!completionBonusAwarded) {
-          console.log('💎 AWARDING COMPLETION BONUS NOW!');
-          
-          // Award 1000 coin completion bonus
-          const currentPlayerData = await gameDB.getPlayerData();
-          console.log('💰 Current player data before bonus:', currentPlayerData);
-          
-          const newPlayerData = {
-            ...currentPlayerData,
-            coins: currentPlayerData.coins + 1000,
-            totalCoinsEarned: (currentPlayerData.totalCoinsEarned || 0) + 1000,
-            completionBonusAwarded: true
-          };
-          
-          await gameDB.savePlayerData(newPlayerData);
-          await gameDB.markCompletionBonusAwarded();
-          
-          console.log('🎉 CAMPAIGN COMPLETED! Awarded 1000 coin completion bonus!');
-          console.log('💰 New player data after bonus:', newPlayerData);
-          
-          // Trigger a global event for UI to show celebration
-          console.log('🎊 Dispatching campaignCompleted event...');
-          window.dispatchEvent(new CustomEvent('campaignCompleted', {
-            detail: { bonusCoins: 1000, totalLevels: 13 }
-          }));
-          
-          // Force refresh player inventory
-          console.log('🔄 Dispatching forceRefreshInventory event...');
-          window.dispatchEvent(new CustomEvent('forceRefreshInventory'));
-          
-          return { bonusAwarded: true, bonusAmount: 1000 };
-        } else {
-          console.log('⚠️ Completion bonus already awarded, skipping...');
-        }
-      } else {
-        console.log('❌ Not all levels completed yet, completion bonus not triggered');
-      }
-
-      return true;
+      setIsLoading(true);
+      const { default: campaignManager } = await import('../utils/campaignManager');
+      const progress = await campaignManager.loadProgress();
+      setCampaignProgress(progress);
+      console.log(`✅ useCampaignProgress: Loaded ${progress.length} completed levels`);
     } catch (error) {
-      console.error('Failed to save level progress:', error);
+      console.error('❌ useCampaignProgress: Failed to load campaign progress:', error);
+      setCampaignProgress([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  // Load data on mount and when auth changes
+  useEffect(() => {
+    loadCampaignProgress();
+  }, [loadCampaignProgress]);
+
+  // Complete level with stars - simplified
+  const completeLevelWithStars = useCallback(async (levelId, stars, coinsEarned, bestTime = null) => {
+    if (!isAuthenticated) return false;
+    
+    try {
+      const { default: campaignManager } = await import('../utils/campaignManager');
+      const result = await campaignManager.completeLevel(levelId, stars, coinsEarned, bestTime);
+      
+      // Update local state with fresh data
+      const progress = await campaignManager.loadProgress();
+      setCampaignProgress(progress);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ useCampaignProgress: Failed to complete level:', error);
       return false;
     }
-  }, [levelProgress]);
+  }, [isAuthenticated]);
 
-  // Check if level is completed
+  // Check if level is completed - simplified
   const isLevelCompleted = useCallback((levelId) => {
-    return levelProgress[levelId]?.completed || false;
-  }, [levelProgress]);
+    const levelData = campaignProgress.find(p => p.levelId === levelId);
+    return levelData ? levelData.completed : false;
+  }, [campaignProgress]);
 
-  // Get stars for level
+  // Get level stars - simplified
   const getLevelStars = useCallback((levelId) => {
-    return levelProgress[levelId]?.stars || 0;
-  }, [levelProgress]);
+    const levelData = campaignProgress.find(p => p.levelId === levelId);
+    return levelData ? levelData.stars : 0;
+  }, [campaignProgress]);
 
   return {
-    levelProgress,
+    campaignProgress,
     isLoading,
     completeLevelWithStars,
     isLevelCompleted,
-    getLevelStars
+    getLevelStars,
+    refreshCampaignProgress: loadCampaignProgress
   };
 };

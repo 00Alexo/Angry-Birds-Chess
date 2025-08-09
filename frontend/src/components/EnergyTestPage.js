@@ -11,7 +11,6 @@ const EnergyTestPage = ({ onBack }) => {
     timeUntilNextEnergy,
     purchaseEnergy,
     resetProgress,
-    resetEverything,
     spendEnergy,
     addCoins
   } = usePlayerInventory();
@@ -19,7 +18,8 @@ const EnergyTestPage = ({ onBack }) => {
   const { 
     completeLevelWithStars, 
     isLevelCompleted, 
-    getLevelStars 
+    getLevelStars,
+    isLoading: campaignLoading
   } = useCampaignProgress();
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [log, setLog] = useState([]);
@@ -59,8 +59,11 @@ const EnergyTestPage = ({ onBack }) => {
 
   const handleResetEverything = async () => {
     if (window.confirm('🚨 RESET EVERYTHING? This will clear ALL progress including campaign levels and cannot be undone!')) {
-      const success = await resetEverything();
+      const success = await resetProgress();
       addToLog(success ? 'Everything reset! Page will reload...' : 'Failed to reset everything');
+      if (success) {
+        setTimeout(() => window.location.reload(), 1000);
+      }
     }
   };
 

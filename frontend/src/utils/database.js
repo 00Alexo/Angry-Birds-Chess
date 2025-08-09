@@ -233,7 +233,7 @@ class GameDatabase {
   }
 
   // Purchase energy with coins
-  async purchaseEnergy(energyAmount, costPerEnergy = 10) {
+  async purchaseEnergy(energyAmount, costPerEnergy = 3) {
     const playerData = await this.getPlayerData();
     const totalCost = energyAmount * costPerEnergy;
     

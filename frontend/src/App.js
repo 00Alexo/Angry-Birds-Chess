@@ -1,6 +1,7 @@
 
-
 import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import LoginSignupPage from './components/LoginSignupPage';
 import MainMenu from './components/MainMenu';
 import CharactersPage from './components/CharactersPage';
 import CampaignPage from './components/CampaignPage';
@@ -9,21 +10,25 @@ import EnergyTestPage from './components/EnergyTestPage';
 import ShopPage from './components/ShopPage';
 import { usePlayerInventory, useCampaignProgress } from './hooks/useGameData';
 
-function App() {
-  const [currentScreen, setCurrentScreen] = useState('menu'); // Back to main menu as default
+// Main App Component wrapped with Auth
+function AppContent() {
+  const { user, isAuthenticated, isLoading: authLoading, login, logout } = useAuth();
+  const [currentScreen, setCurrentScreen] = useState('menu');
   const [selectedDifficulty, setSelectedDifficulty] = useState(null);
   const [selectedLevel, setSelectedLevel] = useState(null);
   const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
+  const [authError, setAuthError] = useState('');
+  const [authIsLoading, setAuthIsLoading] = useState(false);
   
   // Check for testing route in URL
   React.useEffect(() => {
     const path = window.location.pathname;
-    if (path === '/testing') {
+    if (path === '/testing' && isAuthenticated) {
       setCurrentScreen('energy-test');
     }
-  }, []);
+  }, [isAuthenticated]);
   
-  // Use custom hooks for data management
+  // Use custom hooks for data management (only when authenticated)
   const { 
     playerInventory, 
     isLoading: inventoryLoading, 
@@ -32,13 +37,53 @@ function App() {
     purchaseEnergy,
     resetProgress,
     timeUntilNextEnergy,
-    refreshPlayerData,
     purchaseShopItem,
     getDailyDeals,
     saveSelectedTheme,
     getSelectedTheme
   } = usePlayerInventory();
   const { completeLevelWithStars, isLevelCompleted, getLevelStars } = useCampaignProgress();
+
+  // Handle authentication
+  const handleAuth = async (credentials, isLoginMode) => {
+    setAuthIsLoading(true);
+    setAuthError('');
+    
+    try {
+      const result = await login(credentials, isLoginMode);
+      
+      if (!result.success) {
+        setAuthError(result.message || 'Authentication failed');
+      }
+    } catch (error) {
+      setAuthError(error.message || 'Authentication failed');
+    } finally {
+      setAuthIsLoading(false);
+    }
+  };
+
+  // Show loading screen while checking authentication
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-yellow-400 mx-auto mb-4"></div>
+          <p className="text-white text-xl">Connecting to Server...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login/signup screen if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <LoginSignupPage 
+        onLogin={handleAuth}
+        isLoading={authIsLoading}
+        error={authError}
+      />
+    );
+  }
 
   // Show loading screen while data loads
   if (inventoryLoading) {
@@ -47,6 +92,7 @@ function App() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-yellow-400 mx-auto mb-4"></div>
           <p className="text-white text-xl">Loading Game Data...</p>
+          <p className="text-gray-300 text-sm mt-2">Welcome back, {user?.username}!</p>
         </div>
       </div>
     );
@@ -54,20 +100,18 @@ function App() {
 
   const showNotification = (message, type = 'info') => {
     setNotification({ show: true, message, type });
-    // Auto-hide notification after 4 seconds
     setTimeout(() => {
       setNotification({ show: false, message: '', type: 'info' });
     }, 4000);
   };
 
   const handleMultiPlayer = () => {
-    showNotification(`Multiplayer is not available yet as the game is still in it's beta phase, but will be available soon with our own ELO system!`, `error`);
+    showNotification(`Multiplayer is not available yet as the game is still in its beta phase, but will be available soon with our own ELO system!`, `error`);
   };
 
   const handleSelectDifficulty = async (difficulty) => {
     setSelectedDifficulty(difficulty);
     
-    // Create level data based on difficulty
     const difficultyLevels = {
       easy: {
         name: "Rookie Battle",
@@ -105,20 +149,17 @@ function App() {
 
     console.log(`Starting ${difficulty} difficulty battle (Free practice)`);
     
-    // Store the level data and navigate to chess board
     setSelectedLevel(difficultyLevels[difficulty]);
     setCurrentScreen('chess');
     window.history.pushState(null, null, `/difficulty/${difficulty}`);
   };
 
   const handleSelectLevel = async (levelId, levelData) => {
-    // Check if player has enough energy
     if (playerInventory.energy < 20) {
       console.log('Not enough energy! You need 20 energy to start a battle.');
       return;
     }
 
-    // Spend energy for the battle
     const energySpent = await spendEnergy(20);
     if (!energySpent) {
       console.log('Failed to start battle. Not enough energy.');
@@ -127,10 +168,16 @@ function App() {
 
     console.log(`Starting campaign level: ${levelId} (Cost: 20 energy)`);
     
-    // Store the level data and navigate to chess board
     setSelectedLevel(levelData);
     setCurrentScreen('chess');
     window.history.pushState(null, null, `/level/${levelId}`);
+  };
+
+  const handleNextLevel = () => {
+    // Navigate back to campaign to show progress and allow next level selection
+    setCurrentScreen('campaign');
+    setSelectedLevel(null);
+    window.history.pushState(null, null, '/campaign');
   };
 
   const handleShowCharacters = () => {
@@ -171,6 +218,12 @@ function App() {
     window.history.pushState(null, null, '/');
   };
 
+  const handleLogout = () => {
+    logout();
+    setCurrentScreen('menu');
+    window.history.pushState(null, null, '/');
+  };
+
   const renderCurrentScreen = () => {
     switch (currentScreen) {
       case 'energy-test':
@@ -190,6 +243,7 @@ function App() {
         return (
           <ChessBoardPage 
             onBack={selectedDifficulty ? handleBackFromDifficulty : handleBackToCampaign}
+            onNextLevel={handleNextLevel}
             levelData={selectedLevel}
             playerInventory={playerInventory}
             spendEnergy={spendEnergy}
@@ -204,12 +258,9 @@ function App() {
             onBack={handleBackToMenu} 
             onSelectLevel={handleSelectLevel} 
             playerInventory={playerInventory}
-            isLevelCompleted={isLevelCompleted}
-            getLevelStars={getLevelStars}
             purchaseEnergy={purchaseEnergy}
             resetProgress={resetProgress}
             timeUntilNextEnergy={timeUntilNextEnergy}
-            completeLevelWithStars={completeLevelWithStars}
             purchaseShopItem={purchaseShopItem}
           />
         );
@@ -222,11 +273,13 @@ function App() {
             onShowCampaign={handleShowCampaign}
             onShowTesting={handleShowTesting}
             onShowShop={handleShowShop}
+            onLogout={handleLogout}
             playerInventory={playerInventory}
             purchaseEnergy={purchaseEnergy}
             timeUntilNextEnergy={timeUntilNextEnergy}
             saveSelectedTheme={saveSelectedTheme}
             getSelectedTheme={getSelectedTheme}
+            userName={user?.username}
           />
         );
     }
@@ -267,6 +320,14 @@ function App() {
       )}
       {renderCurrentScreen()}
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

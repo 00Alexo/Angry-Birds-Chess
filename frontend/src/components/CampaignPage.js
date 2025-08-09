@@ -11,17 +11,15 @@ import {
 } from './characters';
 import EnergyPurchaseModal from './EnergyPurchaseModal';
 import EnergyDisplay from './EnergyDisplay';
+import apiService from '../services/apiService';
 
 const CampaignPage = ({ 
   onBack, 
   onSelectLevel, 
   playerInventory, 
-  isLevelCompleted, 
-  getLevelStars,
   purchaseEnergy,
   resetProgress,
   timeUntilNextEnergy = 0,
-  completeLevelWithStars, // Added missing prop
   purchaseShopItem
 }) => {
   const [hoveredLevel, setHoveredLevel] = useState(null);
@@ -33,41 +31,232 @@ const CampaignPage = ({
   const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
   const [showThemeSelector, setShowThemeSelector] = useState(false);
   const [selectedTheme, setSelectedTheme] = useState('default');
+  const [showSkipConfirmation, setShowSkipConfirmation] = useState(false);
+  
+  // Simple campaign state
+  const [campaignProgress, setCampaignProgress] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Load campaign progress on mount
+  useEffect(() => {
+    const loadProgress = async () => {
+      try {
+        console.log('🎯 CampaignPage: Starting to load progress...');
+        const { default: campaignManager } = await import('../utils/campaignManager');
+        console.log('🔗 CampaignPage: Campaign manager imported, calling loadProgress...');
+        const progress = await campaignManager.loadProgress();
+        console.log('✅ CampaignPage: Progress loaded:', progress);
+        setCampaignProgress(progress);
+        setIsLoading(false);
+        console.log('🎉 CampaignPage: State updated, isLoading set to false');
+      } catch (error) {
+        console.error('❌ CampaignPage: Failed to load campaign progress:', error);
+        setCampaignProgress([]);
+        setIsLoading(false);
+      }
+    };
+    
+    loadProgress();
+  }, []);
+
+  // Listen for campaign progress updates
+  useEffect(() => {
+    const handleProgressUpdate = async () => {
+      console.log('🔄 CampaignPage: Received campaign progress update event, refreshing...');
+      try {
+        const { default: campaignManager } = await import('../utils/campaignManager');
+        const progress = await campaignManager.loadProgress();
+        setCampaignProgress(progress);
+        console.log('✅ CampaignPage: Progress refreshed after update:', progress);
+      } catch (error) {
+        console.error('❌ CampaignPage: Failed to refresh progress:', error);
+      }
+    };
+
+    window.addEventListener('campaignProgressUpdated', handleProgressUpdate);
+    return () => {
+      window.removeEventListener('campaignProgressUpdated', handleProgressUpdate);
+    };
+  }, []);
+
+  // Simple helper functions using campaign manager
+  const isLevelCompleted = (levelId) => {
+    if (isLoading) {
+      console.log(`⏳ CampaignPage: Still loading, returning false for level ${levelId}`);
+      return false;
+    }
+    
+    // Convert to string for comparison since backend stores as string
+    const levelIdStr = String(levelId);
+    const levelData = campaignProgress.find(p => String(p.levelId) === levelIdStr);
+    const completed = levelData ? levelData.completed : false;
+    console.log(`🔍 CampaignPage: isLevelCompleted(${levelId}) -> levelIdStr(${levelIdStr}) = ${completed}`, 'levelData:', levelData, 'all progress:', campaignProgress);
+    return completed;
+  };
+
+  const getLevelStars = (levelId) => {
+    if (isLoading) {
+      console.log(`⏳ CampaignPage: Still loading, returning 0 stars for level ${levelId}`);
+      return 0;
+    }
+    
+    // Convert to string for comparison since backend stores as string
+    const levelIdStr = String(levelId);
+    const levelData = campaignProgress.find(p => String(p.levelId) === levelIdStr);
+    const stars = levelData ? levelData.stars : 0;
+    console.log(`⭐ CampaignPage: getLevelStars(${levelId}) -> levelIdStr(${levelIdStr}) = ${stars}`, 'levelData:', levelData);
+    return stars;
+  };
+
+  // Complete level function for dev menu
+  const completeLevelWithStars = async (levelId, stars, coinsEarned) => {
+    try {
+      const { default: campaignManager } = await import('../utils/campaignManager');
+      const result = await campaignManager.completeLevel(levelId, stars, coinsEarned);
+      
+      // Refresh local progress
+      const progress = await campaignManager.loadProgress();
+      setCampaignProgress(progress);
+      
+      return result;
+    } catch (error) {
+      console.error('Failed to complete level:', error);
+      return false;
+    }
+  };
 
   // Handle level skip functionality
   const handleSkipLevel = async () => {
-    if (!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0) {
-      console.log('No level skip tokens available');
+    console.log('🎯 handleSkipLevel: Starting level skip process...');
+    console.log('🎯 handleSkipLevel: Current tokens:', playerInventory.levelSkipTokens);
+    console.log('🎯 handleSkipLevel: Preview level:', previewLevel?.id);
+
+    // Quick authentication check
+    console.log('🔐 handleSkipLevel: Checking authentication...');
+    try {
+      const authCheck = await apiService.checkConnection();
+      console.log('🔐 Authentication status:', authCheck);
+    } catch (authError) {
+      console.error('🔐 Authentication failed:', authError);
+      console.error('❌ Cannot skip level - not authenticated');
       return;
     }
 
-    if (isLevelCompleted && isLevelCompleted(previewLevel.id)) {
-      console.log('Level already completed');
+    if (!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0) {
+      console.log('🎯 handleSkipLevel: No level skip tokens available');
+      return;
+    }
+
+    if (isLevelCompleted(previewLevel.id)) {
+      console.log('🎯 handleSkipLevel: Level already completed');
       return;
     }
 
     try {
-      // First consume the level skip token (this should happen BEFORE completing the level)
+      console.log('🎯 handleSkipLevel: Consuming level skip token...');
+      // First consume the level skip token
       const result = await purchaseShopItem('level_skip', 0, { 
         skipLevel: previewLevel.id,
         consumeToken: true 
       });
 
+      console.log('🎯 handleSkipLevel: Token consumption result:', result);
+
       if (!result.success) {
-        console.error('Failed to consume level skip token:', result.message);
+        console.error('🎯 handleSkipLevel: Failed to consume level skip token:', result.message);
         return;
       }
 
-      console.log(`🎯 Level skip token consumed. Remaining tokens: ${result.newPlayerData.levelSkipTokens}`);
+      console.log(`🎯 Level skip token consumed. Remaining tokens: ${result.newPlayerData?.levelSkipTokens}`);
 
-      // Then use a level skip token to complete the level with 1 star
-      await completeLevelWithStars(previewLevel.id, 1, previewLevel.coinReward);
+      // Log current campaign progress before completion
+      console.log('📊 Campaign progress before completion:', campaignProgress.find(p => String(p.levelId) === String(previewLevel.id)));
+
+      // Then complete the level using campaign manager
+      console.log('🎯 handleSkipLevel: Completing level with 1 star...');
+      console.log('🎯 handleSkipLevel: Parameters - levelId:', previewLevel.id, 'stars:', 1, 'coinReward:', previewLevel.coinReward);
       
-      setShowPreview(false);
-      console.log(`Level ${previewLevel.id} skipped successfully!`);
+      try {
+        // Ensure coinReward is a number and fallback to 0 if undefined
+        const coinReward = Number(previewLevel.coinReward) || 0;
+        console.log('🎯 handleSkipLevel: Using coinReward:', coinReward, 'type:', typeof coinReward);
+        
+        const completionResult = await completeLevelWithStars(previewLevel.id, 1, coinReward);
+        console.log('🎯 handleSkipLevel: Completion result:', completionResult);
+        
+        if (completionResult && !completionResult.error) {
+          // Manually refresh campaign progress to ensure UI updates
+          console.log('🔄 handleSkipLevel: Manually refreshing campaign progress...');
+          const { default: campaignManager } = await import('../utils/campaignManager');
+          
+          // Wait a moment for the backend to fully process
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          const freshProgress = await campaignManager.loadProgress();
+          setCampaignProgress(freshProgress);
+          
+          setShowPreview(false);
+          console.log(`🎯 Level ${previewLevel.id} skipped successfully!`);
+          
+          // Log the fresh progress to verify
+          console.log('🔍 Fresh campaign progress after skip:', freshProgress);
+          const levelAfterSkip = freshProgress.find(p => String(p.levelId) === String(previewLevel.id));
+          console.log('🔍 Level status after skip:', levelAfterSkip);
+        } else {
+          console.error('🎯 handleSkipLevel: Level completion returned false/null');
+        }
+      } catch (completionError) {
+        console.error('🎯 handleSkipLevel: Error during level completion:', completionError);
+        console.error('🎯 handleSkipLevel: Completion error stack:', completionError.stack);
+      }
     } catch (error) {
-      console.error('Failed to skip level:', error);
+      console.error('🎯 handleSkipLevel: Failed to skip level:', error);
+      console.error('🎯 handleSkipLevel: Error stack:', error.stack);
     }
+  };
+
+  // TEST FUNCTIONS FOR DEBUGGING
+  const testLevelCompletion = async () => {
+    console.log('🧪 TESTING LEVEL COMPLETION DIRECTLY...');
+    const levelId = previewLevel?.id || 1;
+    
+    try {
+      const response = await apiService.completeLevelWithStars(levelId, 3, null, 100);
+      console.log('✅ Level completion test SUCCESS:', response);
+      alert(`Level completion test SUCCESS! Level ${levelId} marked complete.`);
+      
+      // Refresh progress
+      const { default: campaignManager } = await import('../utils/campaignManager');
+      const freshProgress = await campaignManager.loadProgress();
+      setCampaignProgress(freshProgress);
+    } catch (error) {
+      console.error('❌ Level completion test FAILED:', error);
+      alert(`Level completion test FAILED: ${error.message}`);
+    }
+  };
+
+  const debugDatabase = () => {
+    console.log('🔍 CURRENT CAMPAIGN STATE:');
+    console.log('Preview level:', previewLevel);
+    console.log('Campaign progress:', campaignProgress);
+    console.log('Completed levels:', campaignProgress.filter(p => p.completed).map(p => p.levelId));
+    console.log('Player inventory:', playerInventory);
+  };
+
+  const debugAuth = () => {
+    const token = localStorage.getItem('token');
+    console.log('🔐 AUTH DEBUG:');
+    console.log('Token exists:', !!token);
+    console.log('Token length:', token?.length);
+    console.log('Token preview:', token ? token.substring(0, 20) + '...' : 'None');
+  };
+
+  // Handle skip button click - show confirmation modal
+  const handleSkipButtonClick = () => {
+    if (!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0) {
+      return; // Button should be disabled, but just in case
+    }
+    setShowSkipConfirmation(true);
   };
 
   // Available board themes
@@ -428,144 +617,251 @@ const CampaignPage = ({
     }
   ];
 
-  // Listen for campaign completion celebration AND check completion on page load
-  useEffect(() => {
-    const handleCampaignCompleted = (event) => {
-      console.log('🎉 CampaignPage: Received campaignCompleted event!', event.detail);
-      const { bonusCoins, totalLevels } = event.detail;
-      setShowCompletionCelebration({ bonusCoins, totalLevels });
-      
-      // Auto-hide celebration after 10 seconds (extended for testing)
-      setTimeout(() => {
-        setShowCompletionCelebration(false);
-      }, 10000);
-    };
-
-    // Check if all levels are completed when page loads
-    const checkCompletionOnLoad = async () => {
-      console.log('🔍 CampaignPage: Checking completion status on page load...');
-      
-      // Wait a moment for data to load
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const allCompleted = Array.from({length: 13}, (_, i) => i + 1).every(id => 
-        isLevelCompleted && isLevelCompleted(id)
-      );
-      
-      console.log(`🔍 All levels completed: ${allCompleted}`);
-      console.log('📊 Level completion status:', Array.from({length: 13}, (_, i) => i + 1).map(id => 
-        `Level ${id}: ${isLevelCompleted && isLevelCompleted(id) ? '✅' : '❌'}`
-      ));
-      
-      if (allCompleted) {
-        console.log('🎯 ALL LEVELS COMPLETED ON PAGE LOAD! Checking completion bonus...');
-        
-        // Import database dynamically to check bonus status
-        const gameDB = (await import('../utils/database')).default;
-        const completionBonusAwarded = await gameDB.getCompletionBonusStatus();
-        
-        console.log(`💎 Completion bonus already awarded: ${completionBonusAwarded}`);
-        
-        if (!completionBonusAwarded) {
-          console.log('🚨 COMPLETION BONUS NOT AWARDED YET! Triggering celebration...');
-          
-          // Award 1000 coin completion bonus
-          const playerData = await gameDB.getPlayerData();
-          console.log('💰 Current player data before bonus:', playerData);
-          
-          const newPlayerData = {
-            ...playerData,
-            coins: playerData.coins + 1000,
-            totalCoinsEarned: (playerData.totalCoinsEarned || 0) + 1000,
-            completionBonusAwarded: true
-          };
-          
-          await gameDB.savePlayerData(newPlayerData);
-          await gameDB.markCompletionBonusAwarded();
-          
-          console.log('🎉 CAMPAIGN COMPLETED! Awarded 1000 coin completion bonus on page load!');
-          console.log('💰 New player data after bonus:', newPlayerData);
-          
-          // Trigger celebration screen
-          setShowCompletionCelebration({ bonusCoins: 1000, totalLevels: 13 });
-          
-          // Auto-hide celebration after 10 seconds
-          setTimeout(() => {
-            setShowCompletionCelebration(false);
-          }, 10000);
-          
-          // Force refresh player inventory
-          console.log('🔄 Dispatching forceRefreshInventory event...');
-          window.dispatchEvent(new CustomEvent('forceRefreshInventory'));
-        } else {
-          console.log('✅ Completion bonus already awarded, no celebration needed');
-        }
-      } else {
-        console.log('❌ Not all levels completed, no bonus check needed');
-      }
-    };
-
-    console.log('🎯 CampaignPage: Setting up campaignCompleted event listener...');
-    
-    const handleCoinMultiplierUsed = (event) => {
-      const { originalCoins, finalCoins, usesLeft } = event.detail;
-      
-      // Create a temporary notification element
-      const notification = document.createElement('div');
-      notification.innerHTML = `
-        <div class="fixed top-4 right-4 bg-gradient-to-r from-amber-500 to-yellow-500 text-white p-4 rounded-lg shadow-lg z-[9999] animate-bounce">
-          <div class="font-bold">🎉 Coin Multiplier Applied!</div>
-          <div>${originalCoins} → ${finalCoins} coins (${usesLeft} uses left)</div>
-        </div>
-      `;
-      
-      document.body.appendChild(notification);
-      
-      // Remove notification after 4 seconds
-      setTimeout(() => {
-        if (document.body.contains(notification)) {
-          document.body.removeChild(notification);
-        }
-      }, 4000);
-      
-      console.log(`🎉 Coin Multiplier Applied! ${originalCoins} → ${finalCoins} coins (${usesLeft} uses left)`);
-    };
-
-    window.addEventListener('campaignCompleted', handleCampaignCompleted);
-    window.addEventListener('coinMultiplierUsed', handleCoinMultiplierUsed);
-    
-    // Check completion status when page loads
-    if (isLevelCompleted && getLevelStars) {
-      checkCompletionOnLoad();
-    }
-    
-    return () => {
-      console.log('🎯 CampaignPage: Removing event listeners...');
-      window.removeEventListener('campaignCompleted', handleCampaignCompleted);
-      window.removeEventListener('coinMultiplierUsed', handleCoinMultiplierUsed);
-    };
-  }, [isLevelCompleted, getLevelStars]);
-
-  // Make completeLevelWithStars globally available for testing
-  useEffect(() => {
-    if (completeLevelWithStars) {
-      window.completeLevelWithStars = completeLevelWithStars;
-    }
-    return () => {
-      delete window.completeLevelWithStars;
-    };
-  }, [completeLevelWithStars]);
-
   // Calculate actual progress stats
   const getProgressStats = () => {
-    const completedLevels = campaignLevels.filter(level => isLevelCompleted && isLevelCompleted(level.id)).length;
-    const totalStars = campaignLevels.reduce((sum, level) => sum + (getLevelStars ? getLevelStars(level.id) : 0), 0);
+    if (isLoading) {
+      console.log('⏳ CampaignPage: Still loading, returning default stats');
+      return { completedLevels: 0, totalStars: 0, empireControl: 0 };
+    }
+    
+    console.log('📊 CampaignPage: Calculating progress stats...');
+    console.log('📊 Campaign progress array:', campaignProgress);
+    console.log('📊 Campaign levels array length:', campaignLevels.length);
+    
+    // Calculate directly without calling the helper functions (to avoid recursion)
+    const completedLevels = campaignLevels.filter(level => {
+      const levelIdStr = String(level.id);
+      const levelData = campaignProgress.find(p => String(p.levelId) === levelIdStr);
+      const completed = levelData ? levelData.completed : false;
+      console.log(`📊 Level ${level.id} (str: ${levelIdStr}) completed:`, completed);
+      return completed;
+    }).length;
+    
+    const totalStars = campaignLevels.reduce((sum, level) => {
+      const levelIdStr = String(level.id);
+      const levelData = campaignProgress.find(p => String(p.levelId) === levelIdStr);
+      const stars = levelData ? levelData.stars : 0;
+      console.log(`📊 Level ${level.id} (str: ${levelIdStr}) stars:`, stars);
+      return sum + stars;
+    }, 0);
+    
     const empireControl = Math.round((completedLevels / 13) * 100);
     
+    console.log('📊 Final stats:', { completedLevels, totalStars, empireControl });
     return { completedLevels, totalStars, empireControl };
   };
 
   const { completedLevels, totalStars, empireControl } = getProgressStats();
+
+  // Make completeLevelWithStars globally available for testing
+  useEffect(() => {
+    window.completeLevelWithStars = completeLevelWithStars;
+    
+    // Debug function to give level skip tokens
+    window.giveLevelSkipTokens = async (amount = 1) => {
+      try {
+        for (let i = 0; i < amount; i++) {
+          const result = await purchaseShopItem('level_skip', 300);
+          console.log(`🎯 Debug: Added level skip token ${i + 1}/${amount}`, result);
+        }
+        console.log(`🎯 Debug: Successfully added ${amount} level skip tokens!`);
+      } catch (error) {
+        console.error('🎯 Debug: Failed to add level skip tokens:', error);
+      }
+    };
+    
+    // Debug function to manually complete a level
+    window.debugCompleteLevel = async (levelId, stars = 3, coins = 100) => {
+      console.log(`🧪 Debug: Manually completing level ${levelId} with ${stars} stars and ${coins} coins`);
+      try {
+        const result = await apiService.completeLevelWithStars(levelId, stars, coins);
+        console.log('🧪 Debug completion result:', result);
+        
+        // Refresh progress
+        const { default: campaignManager } = await import('../utils/campaignManager');
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for backend
+        const freshProgress = await campaignManager.loadProgress();
+        setCampaignProgress(freshProgress);
+        console.log('🧪 Updated progress:', freshProgress.find(p => String(p.levelId) === String(levelId)));
+        alert(`Level ${levelId} completed! Check console for details.`);
+        
+      } catch (error) {
+        console.error('🧪 Debug completion failed:', error);
+        alert(`Failed to complete level ${levelId}: ${error.message}`);
+      }
+    };
+    
+    // Debug function to manually test level skip
+    window.debugSkipLevel = async (levelId) => {
+      console.log(`🧪 Debug: Testing skip for level ${levelId}`);
+      try {
+        // Find level data
+        const level = campaignLevels.find(l => l.id === levelId);
+        if (!level) {
+          console.error(`🧪 Level ${levelId} not found in campaignLevels`);
+          alert(`Level ${levelId} not found`);
+          return;
+        }
+        
+        console.log('🧪 Found level data:', level);
+        console.log('🧪 Current skip tokens:', playerInventory.levelSkipTokens);
+        
+        if (playerInventory.levelSkipTokens <= 0) {
+          console.error('🧪 No skip tokens available');
+          alert('No skip tokens available! Use window.giveLevelSkipTokens() first');
+          return;
+        }
+        
+        // Consume token
+        console.log('🧪 Consuming skip token...');
+        const tokenResult = await purchaseShopItem('level_skip', 0, { 
+          skipLevel: level.id,
+          consumeToken: true 
+        });
+        
+        console.log('🧪 Token consumption result:', tokenResult);
+        
+        if (tokenResult.success) {
+          // Complete level
+          console.log('🧪 Completing level...');
+          const coinReward = Number(level.coinReward) || 0;
+          const completionResult = await completeLevelWithStars(level.id, 1, coinReward);
+          console.log('🧪 Level completion result:', completionResult);
+          
+          // Refresh progress with longer wait
+          console.log('🧪 Refreshing progress...');
+          const { default: campaignManager } = await import('../utils/campaignManager');
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Longer wait
+          const freshProgress = await campaignManager.loadProgress();
+          setCampaignProgress(freshProgress);
+          
+          const levelProgress = freshProgress.find(p => String(p.levelId) === String(level.id));
+          console.log('🧪 Final level status:', levelProgress);
+          
+          if (levelProgress && levelProgress.completed) {
+            alert(`✅ Level ${levelId} successfully skipped and marked as completed!`);
+          } else {
+            alert(`❌ Level ${levelId} skip failed - level not marked as completed`);
+          }
+        } else {
+          console.error('🧪 Token consumption failed');
+          alert('Failed to consume skip token');
+        }
+        
+      } catch (error) {
+        console.error('🧪 Debug skip failed:', error);
+        alert(`Skip test failed: ${error.message}`);
+      }
+    };
+    // Debug function to fix authentication issues
+    window.fixAuth = async () => {
+      try {
+        console.log('🔧 Checking authentication status...');
+        const token = localStorage.getItem('authToken');
+        console.log('🔧 Current token:', token ? 'exists' : 'missing');
+        
+        if (!token) {
+          console.log('🔧 No token found - user needs to log in');
+          alert('You need to log in again. Please refresh the page and log in.');
+          return;
+        }
+        
+        // Test token with a simple API call
+        const testResponse = await fetch('/api/auth/verify-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        
+        if (testResponse.ok) {
+          console.log('🔧 Token is valid!');
+          alert('Authentication is working correctly.');
+        } else {
+          console.log('🔧 Token is invalid - clearing and requiring re-login');
+          localStorage.removeItem('authToken');
+          alert('Your session has expired. Please refresh the page and log in again.');
+        }
+      } catch (error) {
+        console.error('🔧 Auth fix failed:', error);
+        alert('Authentication test failed. Please refresh the page and log in again.');
+      }
+    };
+
+    // Debug function to directly test level completion API
+    window.testLevelCompletion = async (levelId = 1, stars = 1, coins = 50) => {
+      try {
+        console.log(`🧪 Testing level completion API: levelId=${levelId}, stars=${stars}, coins=${coins}`);
+        
+        // Test API call directly
+        const response = await apiService.completeLevelWithStars(levelId, stars, coins);
+        console.log('🧪 API response:', response);
+        
+        // Check if it was saved
+        const progress = await apiService.getCampaignProgress();
+        console.log('🧪 Campaign progress after API call:', progress);
+        
+        const levelData = progress.campaignProgress?.find(p => String(p.levelId) === String(levelId));
+        console.log(`🧪 Level ${levelId} data:`, levelData);
+        
+        return { success: true, response, progress: levelData };
+      } catch (error) {
+        console.error('🧪 Test failed:', error);
+        return { success: false, error };
+      }
+    };
+
+    // Debug function to directly modify tokens (bypassing purchase)
+    window.setLevelSkipTokens = async (amount = 1) => {
+      try {
+        // For debugging, give user free tokens by simulating multiple purchases at 0 cost
+        console.log(`🎯 Debug: Attempting to give ${amount} free level skip tokens...`);
+        
+        // Method 1: Try to give free tokens by calling the backend purchase with price 0
+        let successCount = 0;
+        for (let i = 0; i < amount; i++) {
+          try {
+            const result = await purchaseShopItem('level_skip', 0); // Try with 0 cost
+            if (result.success) {
+              successCount++;
+              console.log(`🎯 Debug: Free token ${i + 1} granted successfully`);
+            }
+          } catch (error) {
+            console.log(`🎯 Debug: Free token ${i + 1} failed:`, error.message);
+          }
+        }
+        
+        if (successCount > 0) {
+          console.log(`🎯 Debug: Successfully gave ${successCount} free level skip tokens for testing!`);
+        } else {
+          console.log(`🎯 Debug: Could not give free tokens. Purchase them from the Shop (Campaign section) for 300 coins each.`);
+          console.log(`Current coins: ${playerInventory.coins}, Current tokens: ${playerInventory.levelSkipTokens || 0}`);
+        }
+      } catch (error) {
+        console.error('🎯 Debug: Failed to give free tokens:', error);
+        console.log(`🎯 Debug failed. Purchase tokens from the Shop instead. Current tokens: ${playerInventory.levelSkipTokens || 0}`);
+      }
+    };
+    // Print available debug commands
+    console.log('🧪🧪🧪 DEBUG COMMANDS AVAILABLE 🧪🧪🧪');
+    console.log('🧪 window.debugCompleteLevel(levelId, stars, coins) - directly complete a level');
+    console.log('🧪 window.debugSkipLevel(levelId) - test level skip functionality');  
+    console.log('🧪 window.giveLevelSkipTokens(amount) - add skip tokens for testing');
+    console.log('🧪 window.testLevelCompletion() - test level completion');
+    console.log('🧪 window.fixAuth() - check authentication status');
+    console.log('🧪 Example: window.debugSkipLevel(13) - test skip on Pig Stronghold (level 13)');
+
+    return () => {
+      delete window.completeLevelWithStars;
+      delete window.giveLevelSkipTokens;
+      delete window.debugCompleteLevel;
+      delete window.debugSkipLevel;
+      delete window.setLevelSkipTokens;
+      delete window.testLevelCompletion;
+      delete window.fixAuth;
+    };
+  }, [completeLevelWithStars, purchaseShopItem, playerInventory.levelSkipTokens]);
 
   // Default full chess setup for levels that don't specify piece configuration (levels 9-13)
   const getDefaultPieceConfig = () => ({
@@ -592,10 +888,10 @@ const CampaignPage = ({
     if (level.id === 1) return true; // First level always unlocked
     
     // Check if previous level is completed
-    const prevLevel = allLevels.find(l => l.id === level.id - 1);
-    if (!prevLevel) return false;
+    const prevLevelCompleted = isLevelCompleted(level.id - 1);
+    console.log(`🔍 Checking if level ${level.id} is unlocked: prev level ${level.id - 1} completed = ${prevLevelCompleted}`);
     
-    return isLevelCompleted && isLevelCompleted(prevLevel.id);
+    return prevLevelCompleted;
   };
 
   // More complex path network
@@ -675,52 +971,44 @@ const CampaignPage = ({
             <p className="text-slate-400 text-base">Liberate the territories from pig control</p>
           </div>
           
-          <div className="flex items-center gap-6 bg-black/60 backdrop-blur-md rounded-2xl px-8 py-4 border-2 border-slate-500/50 shadow-2xl">
+          <div className="flex items-center gap-3 lg:gap-4 bg-black/60 backdrop-blur-md rounded-xl px-4 py-2 border-2 border-white/40 shadow-2xl flex-wrap max-w-full">
             {/* Coins */}
-            <div className="flex items-center gap-3 bg-yellow-500/20 px-4 py-2 rounded-xl border border-yellow-400/50">
-              <IoCash className="w-6 h-6 text-yellow-300 drop-shadow-lg" />
-              <span className="text-yellow-100 font-black text-xl drop-shadow-md">{playerInventory.coins.toLocaleString()}</span>
-              <span className="text-yellow-300 font-bold text-sm">COINS</span>
+            <div className="flex items-center gap-2 bg-yellow-500/20 px-3 py-1.5 rounded-lg border border-yellow-400/50">
+              <IoCash className="text-yellow-300 w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="text-yellow-100 font-bold text-sm sm:text-base">{playerInventory.coins.toLocaleString()}</span>
             </div>
             
-            {/* Separator */}
-            <div className="w-0.5 h-10 bg-slate-400/50 rounded-full"></div>
-            
             {/* Energy */}
-            <div className="flex items-center gap-3 bg-green-500/20 px-4 py-2 rounded-xl border border-green-400/50">
-              <IoBatteryHalf className="w-6 h-6 text-green-300 drop-shadow-lg" />
-              <span className="text-green-100 font-black text-xl drop-shadow-md">{playerInventory.energy}</span>
-              <span className="text-green-300 font-bold text-lg">/</span>
-              <span className="text-green-200 font-bold text-lg">{playerInventory.maxEnergy}</span>
+            <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1.5 rounded-lg border border-blue-400/50">
+              <IoBatteryHalf className="text-blue-300 w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="text-blue-100 font-bold text-sm sm:text-base">{playerInventory.energy}</span>
+              <span className="text-blue-200 font-bold text-xs sm:text-sm">/</span>
+              <span className="text-blue-200 font-bold text-sm sm:text-base">{playerInventory.maxEnergy}</span>
               {playerInventory.energy < playerInventory.maxEnergy && (
                 <button
                   onClick={() => setShowEnergyPurchase(true)}
-                  className="ml-2 bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-2 py-1 rounded-lg transition-colors shadow-lg text-sm"
+                  className="ml-1 bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-1.5 py-0.5 rounded text-xs transition-colors shadow-lg"
                   title="Buy Energy"
                 >
                   +
                 </button>
               )}
-              <span className="text-green-300 font-bold text-sm">ENERGY</span>
             </div>
             
             {/* Energy Timer */}
             {timeUntilNextEnergy > 0 && playerInventory.energy < playerInventory.maxEnergy && (
-              <div className="flex items-center gap-2 bg-cyan-500/20 px-3 py-2 rounded-lg border border-cyan-400/50">
-                <IoTime className="text-cyan-300 w-4 h-4" />
-                <span className="text-cyan-200 font-bold text-sm">
-                  Next: {Math.ceil(timeUntilNextEnergy / 1000 / 60)}m
+              <div className="flex items-center gap-1.5 bg-cyan-500/20 px-2 py-1 rounded-lg border border-cyan-400/50">
+                <IoTime className="text-cyan-300 w-3 h-3" />
+                <span className="text-cyan-200 font-bold text-xs">
+                  {Math.ceil(timeUntilNextEnergy / 1000 / 60)}m
                 </span>
               </div>
             )}
             
-            {/* Separator */}
-            <div className="w-0.5 h-10 bg-slate-400/50 rounded-full"></div>
-            
             {/* Theme Selector */}
             <button
               onClick={() => setShowThemeSelector(!showThemeSelector)}
-              className="p-3 text-white bg-slate-600/60 hover:bg-slate-500/60 transition-colors rounded-xl border border-slate-400/50 hover:border-slate-300/50 shadow-lg"
+              className="p-1.5 text-white bg-slate-600/60 hover:bg-slate-500/60 transition-colors rounded-lg border border-slate-400/50 hover:border-slate-300/50 shadow-lg text-sm"
               title="Board Themes"
             >
               🎨
@@ -729,10 +1017,10 @@ const CampaignPage = ({
             {/* Dev Menu */}
             <button
               onClick={() => setShowDevMenu(!showDevMenu)}
-              className="p-3 text-slate-300 hover:text-white transition-colors bg-slate-700/60 hover:bg-slate-600/60 rounded-xl border border-slate-500/50"
+              className="p-1.5 text-slate-300 hover:text-white transition-colors bg-slate-700/60 hover:bg-slate-600/60 rounded-lg border border-slate-500/50"
               title="Developer Menu"
             >
-              <IoSettings className="w-5 h-5" />
+              <IoSettings className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -807,7 +1095,7 @@ const CampaignPage = ({
             {/* Level nodes with enhanced design */}
             {campaignLevels.map((level) => {
               const levelUnlocked = isLevelUnlocked(level, campaignLevels);
-              const levelCompleted = isLevelCompleted && isLevelCompleted(level.id);
+              const levelCompleted = isLevelCompleted(level.id);
               
               return (
               <div
@@ -875,7 +1163,7 @@ const CampaignPage = ({
                     {[1, 2, 3].map(star => (
                       <IoStar 
                         key={star} 
-                        className={`w-4 h-4 ${star <= (getLevelStars ? getLevelStars(level.id) : level.stars) ? 'text-yellow-400' : 'text-slate-600'}`}
+                        className={`w-4 h-4 ${star <= getLevelStars(level.id) ? 'text-yellow-400' : 'text-slate-600'}`}
                       />
                     ))}
                   </div>
@@ -984,70 +1272,66 @@ const CampaignPage = ({
 
       {/* Developer Menu */}
       {showDevMenu && (
-        <div className="fixed top-20 right-4 bg-slate-800 border border-slate-600 rounded-lg p-4 z-50 shadow-2xl">
-          <h3 className="text-white font-bold mb-3">Developer Menu</h3>
-          <div className="space-y-2">
+        <div className="fixed top-20 right-4 bg-slate-800/90 backdrop-blur-sm border border-slate-600 rounded-lg p-3 z-50 shadow-xl max-w-48">
+          <h3 className="text-white font-bold mb-2 text-sm">Dev Menu</h3>
+          <div className="space-y-1.5">
             <button
               onClick={async () => {
-                if (window.confirm('Complete all levels? This will test the completion bonus.')) {
-                  // Complete all levels 1-13 with 3 stars each
+                if (window.confirm('Complete all levels?')) {
                   for (let levelId = 1; levelId <= 13; levelId++) {
-                    const result = await window.completeLevelWithStars(levelId, 3, levelId * 100);
-                    console.log(`Completed level ${levelId}:`, result);
+                    await window.completeLevelWithStars(levelId, 3, levelId * 100);
                   }
                   setShowDevMenu(false);
-                  // Force refresh the page to see updated progress
                   window.location.reload();
                 }
               }}
-              className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
+              className="w-full px-2 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded transition-colors text-xs font-medium"
             >
-              <IoTrophy className="inline mr-2" />
-              Complete All Levels
+              <IoTrophy className="inline mr-1 w-3 h-3" />
+              Complete All
             </button>
             <button
               onClick={async () => {
-                if (window.confirm('Reset completion bonus status? This will allow the bonus to be awarded again.')) {
-                  // Reset completion bonus status in database
-                  const gameDB = (await import('../utils/database')).default;
-                  const playerData = await gameDB.getPlayerData();
-                  const resetData = {
-                    ...playerData,
-                    completionBonusAwarded: false
-                  };
-                  delete resetData.completionBonusDate;
-                  await gameDB.savePlayerData(resetData);
-                  console.log('🔄 Completion bonus status reset!');
-                  setShowDevMenu(false);
-                }
-              }}
-              className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors"
-            >
-              <IoGift className="inline mr-2" />
-              Reset Completion Bonus
-            </button>
-            <button
-              onClick={async () => {
-                if (window.confirm('Reset all progress? This cannot be undone.')) {
+                if (window.confirm('Reset progress?')) {
                   await resetProgress();
                   setShowDevMenu(false);
+                  window.location.reload();
                 }
               }}
-              className="w-full px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+              className="w-full px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded transition-colors text-xs font-medium"
             >
-              <IoRefresh className="inline mr-2" />
-              Reset Progress
+              <IoRefresh className="inline mr-1 w-3 h-3" />
+              Reset All
             </button>
             <button
               onClick={() => setShowEnergyPurchase(true)}
-              className="w-full px-3 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded transition-colors"
+              className="w-full px-2 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded transition-colors text-xs font-medium"
             >
-              <IoFlash className="inline mr-2" />
+              <IoFlash className="inline mr-1 w-3 h-3" />
               Buy Energy
             </button>
             <button
+              onClick={() => {
+                testLevelCompletion();
+                setShowDevMenu(false);
+              }}
+              className="w-full px-2 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors text-xs font-medium"
+            >
+              🧪 Test Level Complete
+            </button>
+            <button
+              onClick={() => {
+                debugDatabase();
+                debugAuth();
+                setShowDevMenu(false);
+              }}
+              className="w-full px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors text-xs font-medium"
+            >
+              🔍 Debug State
+            </button>
+            <button
               onClick={() => setShowDevMenu(false)}
-              className="w-full px-3 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded transition-colors"
+              className="w-full px-2 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded transition-colors text-xs font-medium"
             >
               Close
             </button>
@@ -1079,10 +1363,8 @@ const CampaignPage = ({
           const currentLevel = campaignLevels.find(l => l.id === hoveredLevel);
           if (!currentLevel) return null;
           
-          const levelCompleted = isLevelCompleted ? isLevelCompleted(currentLevel.id) : currentLevel.completed;
-          const levelUnlocked = currentLevel.id === 1 || (isLevelCompleted ? isLevelCompleted(currentLevel.id - 1) : campaignLevels[currentLevel.id - 2]?.completed);
-          
-          // Smart positioning to keep tooltip in viewport
+              const levelCompleted = isLevelCompleted(currentLevel.id);
+              const levelUnlocked = currentLevel.id === 1 || isLevelCompleted(currentLevel.id - 1);          // Smart positioning to keep tooltip in viewport
           const tooltipWidth = 320; // w-80 = 320px
           const tooltipHeight = 200; // approximate height
           const margin = 20;
@@ -1111,7 +1393,7 @@ const CampaignPage = ({
                 
                 <div className="flex justify-center gap-1 my-2">
                   {[1, 2, 3].map(star => (
-                    <IoStar key={star} className={`w-4 h-4 ${star <= (getLevelStars ? getLevelStars(currentLevel.id) : currentLevel.stars) ? 'text-yellow-400' : 'text-slate-600'}`} />
+                    <IoStar key={star} className={`w-4 h-4 ${star <= getLevelStars(currentLevel.id) ? 'text-yellow-400' : 'text-slate-600'}`} />
                   ))}
                 </div>
                 
@@ -1185,7 +1467,7 @@ const CampaignPage = ({
                       <span className="text-slate-300">Stars:</span>
                       <div className="flex gap-1">
                         {[1, 2, 3].map(star => (
-                          <IoStar key={star} className={`w-4 h-4 ${star <= (getLevelStars ? getLevelStars(previewLevel.id) : previewLevel.stars) ? 'text-yellow-400' : 'text-slate-600'}`} />
+                          <IoStar key={star} className={`w-4 h-4 ${star <= getLevelStars(previewLevel.id) ? 'text-yellow-400' : 'text-slate-600'}`} />
                         ))}
                       </div>
                     </div>
@@ -1297,7 +1579,7 @@ const CampaignPage = ({
               {isLevelUnlocked(previewLevel, campaignLevels) && 
                !isLevelCompleted(previewLevel.id) && (
                 <button
-                  onClick={handleSkipLevel}
+                  onClick={handleSkipButtonClick}
                   disabled={!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0}
                   className={`py-3 px-6 rounded-lg transition-colors font-medium flex items-center gap-2 shadow-lg transform hover:scale-105 ${
                     playerInventory.levelSkipTokens > 0
@@ -1464,6 +1746,61 @@ const CampaignPage = ({
               
               <div className="text-yellow-100 text-sm">
                 🌟 You are now the supreme ruler of the Angry Birds Empire! 🌟
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Skip Confirmation Modal */}
+      {showSkipConfirmation && previewLevel && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl border border-slate-700">
+            <div className="text-center">
+              <div className="mb-4">
+                <IoAdd className="w-16 h-16 rotate-45 text-purple-400 mx-auto mb-2" />
+                <h2 className="text-2xl font-bold text-white mb-2">Skip Level?</h2>
+                <p className="text-slate-300">
+                  Skip <span className="text-purple-400 font-bold">{previewLevel.name}</span>
+                </p>
+              </div>
+              
+              <div className="bg-slate-700/50 rounded-lg p-4 mb-6 space-y-2 text-sm">
+                <div className="flex justify-between text-slate-300">
+                  <span>Cost:</span>
+                  <span className="text-purple-400 font-bold">1 Skip Token</span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Stars Awarded:</span>
+                  <span className="text-yellow-400 font-bold">⭐ 1 Star</span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Coins Earned:</span>
+                  <span className="text-green-400 font-bold">{previewLevel.coinReward} 🪙</span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Remaining Tokens:</span>
+                  <span className="text-purple-400 font-bold">{(playerInventory.levelSkipTokens || 1) - 1}</span>
+                </div>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowSkipConfirmation(false)}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-3 px-6 rounded-lg transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSkipConfirmation(false);
+                    handleSkipLevel();
+                  }}
+                  className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white py-3 px-6 rounded-lg transition-colors font-medium flex items-center justify-center gap-2"
+                >
+                  <IoAdd className="w-4 h-4 rotate-45" />
+                  Skip Level
+                </button>
               </div>
             </div>
           </div>

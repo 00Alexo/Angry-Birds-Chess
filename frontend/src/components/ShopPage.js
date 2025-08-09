@@ -14,9 +14,22 @@ const ShopPage = ({ onBack, playerInventory, purchaseShopItem, getDailyDeals }) 
   // Load daily deals on component mount
   useEffect(() => {
     const loadDailyDeals = async () => {
-      if (getDailyDeals) {
-        const deals = await getDailyDeals();
-        setDailyDeals(deals);
+      try {
+        if (getDailyDeals) {
+          const dealsResult = await getDailyDeals();
+          console.log('📦 ShopPage: Daily deals result:', dealsResult);
+          
+          // Handle both array format and object with deals property
+          const deals = Array.isArray(dealsResult) ? dealsResult : (dealsResult?.deals || []);
+          console.log('📦 ShopPage: Setting daily deals:', deals);
+          setDailyDeals(deals);
+        } else {
+          console.log('📦 ShopPage: No getDailyDeals function provided, setting empty array');
+          setDailyDeals([]);
+        }
+      } catch (error) {
+        console.error('❌ ShopPage: Failed to load daily deals:', error);
+        setDailyDeals([]);
       }
     };
     loadDailyDeals();
@@ -135,7 +148,7 @@ const ShopPage = ({ onBack, playerInventory, purchaseShopItem, getDailyDeals }) 
     ...baseShopItems,
     deals: [
       // Daily deals will be populated from the dailyDeals state
-      ...dailyDeals.map(deal => {
+      ...(Array.isArray(dailyDeals) ? dailyDeals : []).map(deal => {
         const baseItem = getAllBaseItems().find(item => item.id === deal.itemId);
         return baseItem ? {
           ...baseItem,

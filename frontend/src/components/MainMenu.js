@@ -14,11 +14,13 @@ const MainMenu = ({
   onShowCampaign, 
   onShowTesting,
   onShowShop,
+  onLogout,
   playerInventory,
   purchaseEnergy,
   timeUntilNextEnergy = 0,
   saveSelectedTheme,
-  getSelectedTheme
+  getSelectedTheme,
+  userName
 }) => {
   const [showAnimation, setShowAnimation] = useState(false);
   const [showSingleplayerModal, setShowSingleplayerModal] = useState(false);
@@ -62,6 +64,20 @@ const MainMenu = ({
     }
   };
 
+  // Format time until next energy
+  const formatTimeUntilEnergy = (milliseconds) => {
+    if (milliseconds <= 0) return null;
+    
+    const totalSeconds = Math.ceil(milliseconds / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    }
+    return `${seconds}s`;
+  };
+
   // Get remaining time for energy boost
   const getEnergyBoostTimeLeft = () => {
     if (!playerInventory.energyRegenBoost || !playerInventory.energyRegenBoost.active) {
@@ -69,9 +85,11 @@ const MainMenu = ({
     }
     
     const now = Date.now();
-    const timeLeft = playerInventory.energyRegenBoost.expiresAt - now;
+    // Ensure expiresAt is converted to a number (in case it comes as a string from backend)
+    const expiresAt = new Date(playerInventory.energyRegenBoost.expiresAt).getTime();
+    const timeLeft = expiresAt - now;
     
-    if (timeLeft <= 0) {
+    if (timeLeft <= 0 || isNaN(timeLeft)) {
       return null;
     }
     
@@ -191,6 +209,25 @@ const MainMenu = ({
         <div className="absolute bottom-20 left-20 w-24 h-14 bg-white rounded-full opacity-50 animate-pulse" style={{animationDelay: '2s'}}></div>
       </div>
 
+      {/* Top Bar with User Info and Logout */}
+      <div className="relative z-30 flex justify-between items-center mb-2">
+        {/* User Info */}
+        <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md rounded-lg px-3 py-2 border border-white/40">
+          <IoPerson className="text-white w-4 h-4" />
+          <span className="text-white font-medium text-sm">
+            {userName || 'Player'}
+          </span>
+        </div>
+
+        {/* Logout Button */}
+        <button
+          onClick={onLogout}
+          className="bg-red-500/80 hover:bg-red-600/80 backdrop-blur-md text-white px-3 py-2 rounded-lg border border-red-400/50 transition-all duration-200 text-sm font-medium"
+        >
+          Logout
+        </button>
+      </div>
+
       {/* Responsive Status Bar */}
       {playerInventory && (
         <div className="relative z-20 flex justify-end p-2 sm:p-4">
@@ -224,7 +261,7 @@ const MainMenu = ({
               <div className="hidden lg:flex items-center gap-1 bg-cyan-500/20 px-2 py-1 rounded-lg border border-cyan-400/50">
                 <IoTime className="text-cyan-300 w-3 h-3" />
                 <span className="text-cyan-200 font-bold text-xs">
-                  {Math.ceil(timeUntilNextEnergy / 1000 / 60)}m
+                  {formatTimeUntilEnergy(timeUntilNextEnergy)}
                 </span>
               </div>
             )}
