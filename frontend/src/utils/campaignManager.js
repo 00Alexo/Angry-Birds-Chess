@@ -62,6 +62,45 @@ class CampaignManager {
     }
   }
 
+  // Skip a level using a level skip token
+  async skipLevel(levelId, coinsEarned = 0) {
+    try {
+      console.log(`🚀 CampaignManager: Attempting to skip level ${levelId} with ${coinsEarned} coins`);
+      
+      // Ensure levelId is a string for consistency with backend
+      const levelIdStr = String(levelId);
+      console.log(`🔄 CampaignManager: Converting levelId from ${levelId} (${typeof levelId}) to ${levelIdStr} (${typeof levelIdStr})`);
+      
+      // Call the server to skip the level
+      console.log('🔗 CampaignManager: Calling serverGameDB.skipLevel...');
+      const result = await serverGameDB.skipLevel(levelIdStr, coinsEarned);
+      
+      console.log(`✅ CampaignManager: Level ${levelIdStr} skipped successfully!`, result);
+      
+      // Check if the result indicates success
+      if (!result || result.error) {
+        console.error(`❌ CampaignManager: Server returned error for level skip ${levelIdStr}:`, result?.error || 'Unknown error');
+        throw new Error(result?.error || 'Server returned error or null result');
+      }
+      
+      // Reload progress to get fresh data
+      console.log('🔄 CampaignManager: Reloading progress after skip...');
+      await this.loadProgress();
+      
+      // Dispatch event to notify UI components
+      console.log('📢 CampaignManager: Dispatching campaignProgressUpdated event for skip...');
+      window.dispatchEvent(new CustomEvent('campaignProgressUpdated', { 
+        detail: { levelId: levelIdStr, stars: 1, coinsEarned, result, skipped: true } 
+      }));
+      
+      console.log('🎉 CampaignManager: Level skip and reload complete!');
+      return result;
+    } catch (error) {
+      console.error(`❌ CampaignManager: Failed to skip level ${levelId}:`, error);
+      throw error;
+    }
+  }
+
   // Check if a level is completed
   isLevelCompleted(levelId) {
     if (!this.isLoaded) {

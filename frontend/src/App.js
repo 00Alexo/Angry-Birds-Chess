@@ -40,7 +40,8 @@ function AppContent() {
     purchaseShopItem,
     getDailyDeals,
     saveSelectedTheme,
-    getSelectedTheme
+    getSelectedTheme,
+    refreshPlayerData
   } = usePlayerInventory();
   const { completeLevelWithStars, isLevelCompleted, getLevelStars } = useCampaignProgress();
 
@@ -262,6 +263,7 @@ function AppContent() {
             resetProgress={resetProgress}
             timeUntilNextEnergy={timeUntilNextEnergy}
             purchaseShopItem={purchaseShopItem}
+            refreshPlayerData={refreshPlayerData}
           />
         );
       default:

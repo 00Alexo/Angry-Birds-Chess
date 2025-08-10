@@ -163,6 +163,31 @@ class ApiService {
     }
   }
 
+  async skipLevel(levelId, coinsEarned) {
+    console.log(`🚀 ApiService: skipLevel called with levelId=${levelId}, coinsEarned=${coinsEarned}`);
+    
+    const requestBody = { levelId, coinsEarned };
+    console.log('📦 ApiService: Skip request body:', requestBody);
+    
+    try {
+      const response = await this.request('/game/skip-level', {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+      });
+      
+      console.log('✅ ApiService: Skip response received:', response);
+      return response;
+    } catch (error) {
+      console.error('❌ ApiService: Skip request failed:', error);
+      console.error('❌ ApiService: Skip error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      throw error;
+    }
+  }
+
   async purchaseShopItem(itemId, itemPrice, itemData = {}) {
     return this.request('/game/shop/purchase', {
       method: 'POST',

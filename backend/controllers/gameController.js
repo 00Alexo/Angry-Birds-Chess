@@ -539,6 +539,131 @@ const completeLevelWithStars = async (req, res) => {
   }
 };
 
+// Skip level using a level skip token
+const skipLevel = async (req, res) => {
+  try {
+    console.log('🚀🚀🚀 LEVEL SKIP REQUEST RECEIVED! 🚀🚀🚀');
+    console.log('📦 Request body:', req.body);
+    console.log('🔐 User authenticated:', !!req.user);
+    console.log('👤 User ID:', req.user?._id);
+    
+    const { levelId, coinsEarned } = req.body;
+
+    if (!req.user) {
+      console.log('❌ NO USER AUTHENTICATED');
+      return res.status(401).json({ error: 'User not authenticated.' });
+    }
+
+    if (!levelId) {
+      console.log('❌ NO LEVEL ID PROVIDED');
+      return res.status(400).json({ error: 'Level ID is required.' });
+    }
+
+    // Check if user has level skip tokens
+    if (!req.user.playerData.levelSkipTokens || req.user.playerData.levelSkipTokens <= 0) {
+      console.log('❌ NO LEVEL SKIP TOKENS AVAILABLE');
+      return res.status(400).json({ error: 'No level skip tokens available.' });
+    }
+
+    // Validate and sanitize inputs
+    const sanitizedLevelId = String(levelId);
+    const sanitizedCoinsEarned = Math.max(0, Number(coinsEarned) || 0);
+
+    console.log(`🚀 skipLevel: Processing levelId=${sanitizedLevelId}, coinsEarned=${sanitizedCoinsEarned}`);
+    console.log(`🎟️ Current skip tokens: ${req.user.playerData.levelSkipTokens}`);
+
+    // Check if level is already completed
+    const existingProgress = req.user.campaignProgress.find(p => String(p.levelId) === sanitizedLevelId);
+    if (existingProgress && existingProgress.completed) {
+      console.log('❌ LEVEL ALREADY COMPLETED');
+      return res.status(400).json({ error: 'Level is already completed.' });
+    }
+
+    // Consume the level skip token
+    req.user.playerData.levelSkipTokens--;
+    console.log(`🎟️ Consumed skip token. Remaining: ${req.user.playerData.levelSkipTokens}`);
+
+    // Complete the level with 1 star (skip level always gives 1 star)
+    let levelProgress = req.user.campaignProgress.find(p => String(p.levelId) === sanitizedLevelId);
+    
+    if (levelProgress) {
+      console.log('✅ UPDATING EXISTING LEVEL PROGRESS FOR SKIP');
+      levelProgress.completed = true;
+      levelProgress.stars = Math.max(levelProgress.stars, 1); // Skip always gives at least 1 star
+      levelProgress.lastPlayed = new Date();
+      levelProgress.skipped = true; // Mark as skipped
+      req.user.markModified('campaignProgress');
+    } else {
+      console.log('🆕 CREATING NEW LEVEL PROGRESS FOR SKIP');
+      const newProgressEntry = {
+        levelId: sanitizedLevelId,
+        completed: true,
+        stars: 1, // Skip always gives 1 star
+        lastPlayed: new Date(),
+        skipped: true // Mark as skipped
+      };
+      
+      req.user.campaignProgress.push(newProgressEntry);
+      req.user.markModified('campaignProgress');
+    }
+
+    // Add coins if provided
+    if (sanitizedCoinsEarned > 0) {
+      let actualAmount = sanitizedCoinsEarned;
+
+      // Apply coin multiplier if active
+      if (req.user.playerData.coinMultiplier.active && req.user.playerData.coinMultiplier.usesRemaining > 0) {
+        actualAmount = sanitizedCoinsEarned * req.user.playerData.coinMultiplier.multiplier;
+        req.user.playerData.coinMultiplier.usesRemaining--;
+        
+        if (req.user.playerData.coinMultiplier.usesRemaining <= 0) {
+          req.user.playerData.coinMultiplier.active = false;
+        }
+      }
+
+      req.user.playerData.coins += actualAmount;
+      req.user.playerData.totalCoinsEarned += actualAmount;
+      
+      console.log(`💰 Added ${actualAmount} coins from skip (${sanitizedCoinsEarned} base + multiplier)`);
+    }
+
+    console.log('🔄 ATTEMPTING TO SAVE USER TO DATABASE...');
+    
+    try {
+      const updatedUser = await req.user.save();
+      
+      console.log(`✅ LEVEL SKIP SAVED SUCCESSFULLY!`);
+      console.log(`🚀 Level ${sanitizedLevelId} skipped with 1 star and ${sanitizedCoinsEarned} coins!`);
+      console.log(`🎟️ Remaining skip tokens: ${updatedUser.playerData.levelSkipTokens}`);
+      
+      // Verify the skip was saved
+      const skippedProgress = updatedUser.campaignProgress.find(p => String(p.levelId) === sanitizedLevelId);
+      console.log('🔍 Skip verification:', skippedProgress);
+
+      return res.status(200).json({
+        message: 'Level skipped successfully',
+        campaignProgress: updatedUser.campaignProgress,
+        playerData: updatedUser.playerData,
+        coinsAdded: sanitizedCoinsEarned,
+        tokensRemaining: updatedUser.playerData.levelSkipTokens,
+        skippedLevel: skippedProgress
+      });
+    } catch (saveError) {
+      console.error('❌ CRITICAL ERROR: Failed to save level skip!');
+      console.error('❌ Save error details:', saveError);
+      
+      return res.status(500).json({ 
+        error: 'Database save failed during level skip', 
+        details: saveError.message,
+        code: 'SKIP_SAVE_ERROR'
+      });
+    }
+  } catch (error) {
+    console.error('Skip level error:', error);
+    return res.status(500).json({ error: 'Internal server error occurred while skipping level.' });
+  }
+};
+
 // Reset progress
 const resetProgress = async (req, res) => {
   try {
@@ -600,5 +725,6 @@ module.exports = {
   updateLevelProgress,
   completeLevelWithStars,
   purchaseShopItem,
+  skipLevel,
   resetProgress
 };

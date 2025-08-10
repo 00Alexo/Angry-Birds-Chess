@@ -20,7 +20,8 @@ const CampaignPage = ({
   purchaseEnergy,
   resetProgress,
   timeUntilNextEnergy = 0,
-  purchaseShopItem
+  purchaseShopItem,
+  refreshPlayerData
 }) => {
   const [hoveredLevel, setHoveredLevel] = useState(null);
   const [showEnergyPurchase, setShowEnergyPurchase] = useState(false);
@@ -127,9 +128,9 @@ const CampaignPage = ({
 
   // Handle level skip functionality
   const handleSkipLevel = async () => {
-    console.log('🎯 handleSkipLevel: Starting level skip process...');
-    console.log('🎯 handleSkipLevel: Current tokens:', playerInventory.levelSkipTokens);
-    console.log('🎯 handleSkipLevel: Preview level:', previewLevel?.id);
+    console.log('🚀 handleSkipLevel: Starting level skip process...');
+    console.log('🚀 handleSkipLevel: Current tokens:', playerInventory.levelSkipTokens);
+    console.log('🚀 handleSkipLevel: Preview level:', previewLevel?.id);
 
     // Quick authentication check
     console.log('🔐 handleSkipLevel: Checking authentication...');
@@ -143,75 +144,65 @@ const CampaignPage = ({
     }
 
     if (!playerInventory.levelSkipTokens || playerInventory.levelSkipTokens <= 0) {
-      console.log('🎯 handleSkipLevel: No level skip tokens available');
+      console.log('🚀 handleSkipLevel: No level skip tokens available');
       return;
     }
 
     if (isLevelCompleted(previewLevel.id)) {
-      console.log('🎯 handleSkipLevel: Level already completed');
+      console.log('🚀 handleSkipLevel: Level already completed');
       return;
     }
 
     try {
-      console.log('🎯 handleSkipLevel: Consuming level skip token...');
-      // First consume the level skip token
-      const result = await purchaseShopItem('level_skip', 0, { 
-        skipLevel: previewLevel.id,
-        consumeToken: true 
-      });
-
-      console.log('🎯 handleSkipLevel: Token consumption result:', result);
-
-      if (!result.success) {
-        console.error('🎯 handleSkipLevel: Failed to consume level skip token:', result.message);
-        return;
-      }
-
-      console.log(`🎯 Level skip token consumed. Remaining tokens: ${result.newPlayerData?.levelSkipTokens}`);
-
-      // Log current campaign progress before completion
-      console.log('📊 Campaign progress before completion:', campaignProgress.find(p => String(p.levelId) === String(previewLevel.id)));
-
-      // Then complete the level using campaign manager
-      console.log('🎯 handleSkipLevel: Completing level with 1 star...');
-      console.log('🎯 handleSkipLevel: Parameters - levelId:', previewLevel.id, 'stars:', 1, 'coinReward:', previewLevel.coinReward);
+      console.log('🚀 handleSkipLevel: Calling campaign manager skipLevel...');
       
-      try {
-        // Ensure coinReward is a number and fallback to 0 if undefined
-        const coinReward = Number(previewLevel.coinReward) || 0;
-        console.log('🎯 handleSkipLevel: Using coinReward:', coinReward, 'type:', typeof coinReward);
+      // Use the new skipLevel method in campaign manager
+      const { default: campaignManager } = await import('../utils/campaignManager');
+      
+      // Ensure coinReward is a number and fallback to 0 if undefined
+      const coinReward = Number(previewLevel.coinReward) || 0;
+      console.log('🚀 handleSkipLevel: Using coinReward:', coinReward, 'type:', typeof coinReward);
+      
+      const skipResult = await campaignManager.skipLevel(previewLevel.id, coinReward);
+      console.log('🚀 handleSkipLevel: Skip result:', skipResult);
+      
+      if (skipResult && !skipResult.error) {
+        // Manually refresh campaign progress to ensure UI updates
+        console.log('🔄 handleSkipLevel: Manually refreshing campaign progress...');
         
-        const completionResult = await completeLevelWithStars(previewLevel.id, 1, coinReward);
-        console.log('🎯 handleSkipLevel: Completion result:', completionResult);
+        // Wait a moment for the backend to fully process
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
-        if (completionResult && !completionResult.error) {
-          // Manually refresh campaign progress to ensure UI updates
-          console.log('🔄 handleSkipLevel: Manually refreshing campaign progress...');
-          const { default: campaignManager } = await import('../utils/campaignManager');
-          
-          // Wait a moment for the backend to fully process
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          const freshProgress = await campaignManager.loadProgress();
-          setCampaignProgress(freshProgress);
-          
-          setShowPreview(false);
-          console.log(`🎯 Level ${previewLevel.id} skipped successfully!`);
-          
-          // Log the fresh progress to verify
-          console.log('🔍 Fresh campaign progress after skip:', freshProgress);
-          const levelAfterSkip = freshProgress.find(p => String(p.levelId) === String(previewLevel.id));
-          console.log('🔍 Level status after skip:', levelAfterSkip);
-        } else {
-          console.error('🎯 handleSkipLevel: Level completion returned false/null');
+        const freshProgress = await campaignManager.loadProgress();
+        setCampaignProgress(freshProgress);
+        
+        // Refresh player data to update token count and coins
+        console.log('🔄 handleSkipLevel: Refreshing player data...');
+        if (refreshPlayerData) {
+          await refreshPlayerData();
+          console.log('✅ handleSkipLevel: Player data refreshed');
         }
-      } catch (completionError) {
-        console.error('🎯 handleSkipLevel: Error during level completion:', completionError);
-        console.error('🎯 handleSkipLevel: Completion error stack:', completionError.stack);
+        
+        setShowPreview(false);
+        console.log(`🚀 Level ${previewLevel.id} skipped successfully!`);
+        
+        // Log the fresh progress to verify
+        console.log('🔍 Fresh campaign progress after skip:', freshProgress);
+        const levelAfterSkip = freshProgress.find(p => String(p.levelId) === String(previewLevel.id));
+        console.log('🔍 Level status after skip:', levelAfterSkip);
+        
+        // Show success message or celebration
+        console.log(`✅ Level ${previewLevel.id} skipped! Remaining tokens: ${skipResult.tokensRemaining}`);
+      } else {
+        console.error('🚀 handleSkipLevel: Skip returned false/error');
+        throw new Error(skipResult?.error || 'Skip operation failed');
       }
     } catch (error) {
-      console.error('🎯 handleSkipLevel: Failed to skip level:', error);
-      console.error('🎯 handleSkipLevel: Error stack:', error.stack);
+      console.error('🚀 handleSkipLevel: Failed to skip level:', error);
+      console.error('🚀 handleSkipLevel: Error stack:', error.stack);
+      
+      // Show error message to user
+      alert(`Failed to skip level: ${error.message}`);
     }
   };
 
@@ -712,40 +703,38 @@ const CampaignPage = ({
           return;
         }
         
-        // Consume token
-        console.log('🧪 Consuming skip token...');
-        const tokenResult = await purchaseShopItem('level_skip', 0, { 
-          skipLevel: level.id,
-          consumeToken: true 
-        });
+        // Use the new skip method
+        console.log('🧪 Using new skip API method...');
+        const { default: campaignManager } = await import('../utils/campaignManager');
         
-        console.log('🧪 Token consumption result:', tokenResult);
+        const coinReward = Number(level.coinReward) || 0;
+        const skipResult = await campaignManager.skipLevel(level.id, coinReward);
+        console.log('🧪 Skip result:', skipResult);
         
-        if (tokenResult.success) {
-          // Complete level
-          console.log('🧪 Completing level...');
-          const coinReward = Number(level.coinReward) || 0;
-          const completionResult = await completeLevelWithStars(level.id, 1, coinReward);
-          console.log('🧪 Level completion result:', completionResult);
-          
-          // Refresh progress with longer wait
+        if (skipResult && !skipResult.error) {
+          // Refresh progress
           console.log('🧪 Refreshing progress...');
-          const { default: campaignManager } = await import('../utils/campaignManager');
           await new Promise(resolve => setTimeout(resolve, 2000)); // Longer wait
           const freshProgress = await campaignManager.loadProgress();
           setCampaignProgress(freshProgress);
+          
+          // Refresh player data to update token count
+          if (refreshPlayerData) {
+            await refreshPlayerData();
+            console.log('🧪 Player data refreshed');
+          }
           
           const levelProgress = freshProgress.find(p => String(p.levelId) === String(level.id));
           console.log('🧪 Final level status:', levelProgress);
           
           if (levelProgress && levelProgress.completed) {
-            alert(`✅ Level ${levelId} successfully skipped and marked as completed!`);
+            alert(`✅ Level ${levelId} successfully skipped and marked as completed! Remaining tokens: ${skipResult.tokensRemaining}`);
           } else {
             alert(`❌ Level ${levelId} skip failed - level not marked as completed`);
           }
         } else {
-          console.error('🧪 Token consumption failed');
-          alert('Failed to consume skip token');
+          console.error('🧪 Skip failed:', skipResult);
+          alert(`Skip failed: ${skipResult?.error || 'Unknown error'}`);
         }
         
       } catch (error) {

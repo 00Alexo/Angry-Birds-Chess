@@ -87,6 +87,17 @@ class ServerGameDatabase {
     }
   }
 
+  async skipLevel(levelId, coinsEarned) {
+    try {
+      const response = await apiService.skipLevel(levelId, coinsEarned);
+      console.log(`🚀 Level ${levelId} skipped, ${coinsEarned} coins earned`);
+      return response;
+    } catch (error) {
+      console.error(`❌ Failed to skip level ${levelId}:`, error);
+      throw error;
+    }
+  }
+
   async saveLevelProgress(levelId, progressData) {
     try {
       const response = await apiService.saveLevelProgress(levelId, progressData);

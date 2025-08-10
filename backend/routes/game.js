@@ -18,6 +18,7 @@ router.post('/purchase-energy', gameController.purchaseEnergy);
 router.get('/campaign-progress', gameController.getCampaignProgress);
 router.post('/update-level-progress', gameController.updateLevelProgress);
 router.post('/complete-level-with-stars', gameController.completeLevelWithStars);
+router.post('/skip-level', gameController.skipLevel);
 
 // Shop routes
 router.post('/shop/purchase', gameController.purchaseShopItem);
