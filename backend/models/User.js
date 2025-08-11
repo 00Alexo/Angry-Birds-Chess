@@ -70,6 +70,8 @@ const userSchema = new mongoose.Schema({
     result: { type: String, enum: ['win', 'loss', 'draw', 'in-progress'], required: true },
     duration: { type: Number }, // game duration in milliseconds
     movesPlayed: { type: Number, default: 0 },
+  // Detailed move list (optional). Each move can store from/to squares, piece, capture, special flags.
+  moves: [mongoose.Schema.Types.Mixed],
     coinsEarned: { type: Number, default: 0 },
     energySpent: { type: Number, default: 1 },
     levelId: { type: String }, // for campaign games

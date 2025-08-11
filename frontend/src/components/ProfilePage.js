@@ -13,6 +13,7 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
   const [gameHistory, setGameHistory] = useState([]);
   const [historyLimit, setHistoryLimit] = useState(50);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedGame, setExpandedGame] = useState(null); // For showing detailed moves
   const { user } = useAuth();
   const isOwnProfile = user && (user.username === userName);
   const [loading, setLoading] = useState(true);
@@ -116,6 +117,40 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
     const secs = Math.floor((ms % 60000) / 1000);
     if (mins === 0) return `${secs}s`;
     return `${mins}m ${secs}s`;
+  };
+
+  // Helper function to get classification colors and icons
+  const getClassificationDisplay = (classification) => {
+    const displays = {
+      'Brilliant': { color: 'text-cyan-400', bg: 'bg-cyan-900/30', icon: '🔷', symbol: '!!' },
+      'Best': { color: 'text-green-400', bg: 'bg-green-900/30', icon: '✅', symbol: '' },
+      'Excellent': { color: 'text-blue-400', bg: 'bg-blue-900/30', icon: '💎', symbol: '' },
+      'Great': { color: 'text-purple-400', bg: 'bg-purple-900/30', icon: '⭐', symbol: '' },
+      'Good': { color: 'text-gray-400', bg: 'bg-gray-900/30', icon: '👍', symbol: '' },
+      'Inaccuracy': { color: 'text-yellow-400', bg: 'bg-yellow-900/30', icon: '⚠️', symbol: '?!' },
+      'Mistake': { color: 'text-orange-400', bg: 'bg-orange-900/30', icon: '❗', symbol: '?' },
+      'Blunder': { color: 'text-red-400', bg: 'bg-red-900/30', icon: '💥', symbol: '??' },
+      'Missed Win': { color: 'text-pink-400', bg: 'bg-pink-900/30', icon: '❌', symbol: '??!' }
+    };
+    return displays[classification] || { color: 'text-gray-400', bg: 'bg-gray-900/30', icon: '', symbol: '' };
+  };
+
+  // Calculate move statistics for a game
+  const calculateMoveStats = (moves) => {
+    if (!Array.isArray(moves) || moves.length === 0) return null;
+    
+    // Only analyze player moves, ignore AI moves
+    const playerMoves = moves.filter(move => move.actor === 'player');
+    if (playerMoves.length === 0) return null;
+    
+    const stats = {};
+    
+    playerMoves.forEach(move => {
+      if (!move.classification) return;
+      stats[move.classification] = (stats[move.classification] || 0) + 1;
+    });
+    
+    return { player: stats, totalPlayerMoves: playerMoves.length };
   };
 
 
@@ -295,7 +330,17 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
                       </div>
                       <div>
                         <span className="block text-xs">Moves</span>
-                        <span className="text-white">{game.movesPlayed || 0}</span>
+                        <span className="text-white">
+                          {(() => {
+                            if (Array.isArray(game.moves) && game.moves.length > 0) {
+                              const playerMoves = game.moves.filter(move => move.actor === 'player').length;
+                              const totalMoves = game.moves.length;
+                              return `${playerMoves} (${totalMoves})`;
+                            }
+                            // Fallback to movesPlayed if moves array not available
+                            return game.movesPlayed || 0;
+                          })()}
+                        </span>
                       </div>
                       <div>
                         <span className="block text-xs">Coins</span>
@@ -318,6 +363,76 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
                       <div className="mt-2">
                         <span className="text-xs text-white/70">End reason: </span>
                         <span className="text-white/90">{game.endReason}</span>
+                      </div>
+                    )}
+
+                    {/* Move Analysis Summary */}
+                    {Array.isArray(game.moves) && game.moves.length > 0 && (() => {
+                      const moveStats = calculateMoveStats(game.moves);
+                      if (!moveStats) return null;
+
+                      return (
+                        <div className="mt-3 pt-3 border-t border-white/10">
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {Object.entries(moveStats.player).map(([classification, count]) => {
+                              const display = getClassificationDisplay(classification);
+                              return (
+                                <div key={classification} className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${display.bg} ${display.color}`}>
+                                  <span>{display.icon}</span>
+                                  <span>{classification}</span>
+                                  <span className="font-bold">x{count}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <button
+                            onClick={() => setExpandedGame(expandedGame === game.gameId ? null : game.gameId)}
+                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                          >
+                            {expandedGame === game.gameId ? 'Hide Player Moves ▲' : 'Show Player Moves ▼'} ({moveStats.totalPlayerMoves})
+                          </button>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Expanded Move List */}
+                    {expandedGame === game.gameId && Array.isArray(game.moves) && (
+                      <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
+                        <div className="text-xs text-white/70 mb-2">Player Move Details:</div>
+                        {game.moves
+                          .filter(move => move.actor === 'player') // Only show player moves
+                          .map((move, moveIndex) => {
+                          const display = move.classification ? getClassificationDisplay(move.classification) : null;
+                          return (
+                            <div key={moveIndex} className="flex items-center justify-between p-2 bg-black/20 rounded text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-white/80">
+                                  {moveIndex + 1}. {move.from}→{move.to}
+                                </span>
+                                <span className="capitalize text-white/60">{move.piece}</span>
+                                {move.captured && (
+                                  <span className="text-red-400">x{move.captured}</span>
+                                )}
+                                <span className="text-blue-400">🐦</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {move.special && (
+                                  <span className="text-purple-400">{move.special}</span>
+                                )}
+                                {move.isCheck && (
+                                  <span className="text-orange-400">+</span>
+                                )}
+                                {display && (
+                                  <div className={`px-1 py-0.5 rounded flex items-center gap-1 ${display.bg} ${display.color}`}>
+                                    <span>{display.icon}</span>
+                                    <span>{move.classification}</span>
+                                    {display.symbol && <span className="font-bold">{display.symbol}</span>}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

@@ -38,8 +38,9 @@ io.on('connection', (socket) => {
     activeGames.set(gameId, {
       socketId: socket.id,
       ...data,
-  startTime: new Date(),
-  moves: 0 // track moves to decide abandoned losses
+      startTime: new Date(),
+      moves: 0,       // move count
+      moveList: []    // detailed moves for fallback (abandoned games)
     });
 
     if (data.userId) {
@@ -74,12 +75,16 @@ io.on('connection', (socket) => {
       if (typeof data.moves === 'number') {
         gameSession.moves = Math.max(gameSession.moves || 0, data.moves);
       }
+      // Merge provided movesList into session moveList if present
+      if (Array.isArray(data.movesList) && data.movesList.length) {
+        gameSession.moveList = data.movesList; // trust client final authoritative list
+      }
       // Fallback: if userId not provided in end-game payload, try from stored game session
       if (!userId && gameSession.userId) {
         userId = gameSession.userId;
         console.log(`🔄 [WebSocket] Fallback userId from activeGames: ${userId}`);
       }
-      console.log(`💾 [WebSocket] Saving game ${gameId} to database:`, data);
+      console.log(`💾 [WebSocket] Saving game ${gameId} to database:`, { ...data, movesList: Array.isArray(data.movesList) ? `len=${data.movesList.length}` : undefined });
       
       // If userId is provided, save to database
       if (userId) {
@@ -95,7 +100,8 @@ io.on('connection', (socket) => {
             opponent: gameSession.opponent || 'AI',
             result: result || 'draw',
             duration: Date.now() - gameSession.startTime.getTime(),
-            movesPlayed: data.moves || 0,
+            movesPlayed: data.moves || gameSession.moves || 0,
+            moves: (gameSession.moveList && gameSession.moveList.length ? gameSession.moveList : undefined),
             coinsEarned: data.coinsEarned || 0,
             energySpent: 1,
             levelId: gameSession.levelId || null,
@@ -105,7 +111,7 @@ io.on('connection', (socket) => {
             createdAt: gameSession.startTime
           };
 
-          console.log(`📝 [WebSocket] Creating game entry:`, gameEntry);
+          console.log(`📝 [WebSocket] Creating game entry: movesStored=${gameEntry.moves ? gameEntry.moves.length : 0}`);
 
           // Add to game history
           user.gameHistory.push(gameEntry);
@@ -133,7 +139,7 @@ io.on('connection', (socket) => {
             user.playerData.totalPlayTime = (user.playerData.totalPlayTime || 0) + gameEntry.duration;
           }
 
-          // Add coins
+            // Add coins
           if (data.coinsEarned > 0) {
             user.playerData.coins = (user.playerData.coins || 0) + data.coinsEarned;
             user.playerData.totalCoinsEarned = (user.playerData.totalCoinsEarned || 0) + data.coinsEarned;
@@ -168,11 +174,31 @@ io.on('connection', (socket) => {
 
   // Track moves (lightweight notification from client)
   socket.on('game-move', (data) => {
-    const { gameId } = data || {};
+    const { gameId, move } = data || {};
     if (!gameId) return;
     const gameSession = activeGames.get(gameId);
     if (!gameSession) return;
     gameSession.moves = (gameSession.moves || 0) + 1;
+    if (move) {
+      if (!Array.isArray(gameSession.moveList)) gameSession.moveList = [];
+      if (gameSession.moveList.length < 500) {
+        gameSession.moveList.push({
+          from: move.from,
+          to: move.to,
+          piece: move.piece,
+          team: move.team,
+          actor: move.actor,
+          captured: move.captured,
+          special: move.special,
+          isCheck: !!move.isCheck,
+          classification: move.classification,
+          evalBefore: move.evalBefore,
+          evalAfter: move.evalAfter,
+          sacrifice: move.sacrifice,
+          index: gameSession.moveList.length
+        });
+      }
+    }
     // Occasionally log (every 5 moves)
     if (gameSession.moves === 1 || gameSession.moves % 5 === 0) {
       console.log(`♟️ [WebSocket] Move recorded for ${gameId}. Total moves: ${gameSession.moves}`);
@@ -197,6 +223,7 @@ io.on('connection', (socket) => {
             result: 'loss',
             duration,
             movesPlayed: gameData.moves || 0,
+            moves: (gameData.moveList && gameData.moveList.length ? gameData.moveList : undefined),
             coinsEarned: 0,
             energySpent: 1,
             levelId: gameData.levelId || null,

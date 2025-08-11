@@ -13,6 +13,7 @@ import { ImpossibleAI } from './ai/ImpossibleAI.js';
 import socketService from '../services/socketService';
 import simpleSocketService from '../services/simpleSocketService';
 import apiService from '../services/apiService';
+import { analyzeMove } from '../utils/moveAnalyzer';
 
 const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars, selectedTheme = 'default' }) => {
   const { user } = useAuth(); // Get user from AuthContext
@@ -131,6 +132,20 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   // Some API responses use 'id', not '_id'; include both fallback options
   userId: user?.id || user?._id,
         moves: moveHistory.length,
+        movesList: moveHistory.map(m => ({
+          from: m.fromPosition,
+          to: m.toPosition,
+          piece: m.piece,
+          team: m.team || (m.actor === 'player' ? 'birds' : m.actor === 'enemy' ? 'pigs' : undefined),
+          actor: m.actor || (m.team === 'birds' ? 'player' : 'enemy'),
+          captured: m.captured || null,
+          special: m.special || null,
+          isCheck: !!m.isCheck,
+          classification: m.analysis?.classification,
+          evalBefore: m.analysis?.evalBefore,
+          evalAfter: m.analysis?.evalAfter,
+          sacrifice: m.analysis?.sacrifice
+        })),
         coinsEarned,
         stars,
         endReason
@@ -614,6 +629,8 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       from: [fromRow, fromCol], 
       to: [toRow, toCol], 
       piece: piece.type,
+      team: piece.team,
+      actor: piece.team === 'birds' ? 'player' : 'enemy',
       captured: capturedPiece?.type || null,
       capturedTeam: capturedPiece?.team || null,
       fromPosition: getPositionName(fromRow, fromCol),
@@ -669,6 +686,30 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     
     setBoard(newBoard);
     
+    // Analyze move (lightweight heuristic) - needs pre & post boards
+    try {
+      const boardBefore = board; // previous board state
+      const boardAfter = newBoard; // after executing
+      if (aiInstance) {
+        const analysis = analyzeMove({
+          boardBefore,
+          boardAfter,
+          move: {
+            fromRow, fromCol, toRow, toCol, piece: piece.type, captured: capturedPiece?.type || null, special: specialMove
+          },
+          side: piece.team,
+          aiInstance,
+          lastMove,
+          context: { positionHistory, fiftyMoveCounter }
+        });
+        if (analysis) {
+          moveData.analysis = analysis;
+        }
+      }
+    } catch (e) {
+      // Non-fatal
+    }
+    
     // Check if premove needs to be cancelled due to AI's move
     if (premove) {
       const { fromRow, fromCol } = premove;
@@ -701,7 +742,22 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     // Notify backend a move occurred for abandonment tracking
     if (currentGameId) {
       try {
-        simpleSocketService.socket?.emit('game-move', { gameId: currentGameId });
+        simpleSocketService.socket?.emit('game-move', { 
+          gameId: currentGameId,
+          move: {
+            from: moveData.fromPosition,
+            to: moveData.toPosition,
+            piece: moveData.piece,
+            team: moveData.team,
+            actor: moveData.actor,
+            captured: moveData.captured,
+            special: moveData.special || null,
+            isCheck: !!moveData.isCheck,
+            classification: moveData.analysis?.classification,
+            evalBefore: moveData.analysis?.evalBefore,
+            evalAfter: moveData.analysis?.evalAfter
+          }
+        });
       } catch (e) {
         // non-fatal
       }
