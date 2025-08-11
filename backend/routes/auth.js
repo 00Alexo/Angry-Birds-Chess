@@ -1,9 +1,15 @@
+
 const express = require('express');
 const { body } = require('express-validator');
 const authController = require('../controllers/authController');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
+
+// @route   GET /api/auth/profile/:username
+// @desc    Get public user profile by username
+// @access  Public
+router.get('/profile/:username', authController.getUserProfile);
 
 router.post('/register', [
   body('username')

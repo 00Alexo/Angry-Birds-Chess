@@ -7,7 +7,7 @@ export class NightmareAI extends ChessAI {
   }
 
   // Nightmare AI: Maximum strength with deep search and advanced tactics
-  calculateBestMove(board) {
+  async calculateBestMove(board) {
     const allPossibleMoves = this.getAllPossibleMoves(board, 'pigs');
     
     if (allPossibleMoves.length === 0) return null;
@@ -24,15 +24,33 @@ export class NightmareAI extends ChessAI {
     // Start with captures and tactical moves for better move ordering
     const orderedMoves = this.orderMoves(board, allPossibleMoves);
 
-    for (const move of orderedMoves) {
-      const value = this.alphaBetaWithDepth(board, move, 3, -Infinity, Infinity, false); // 3-move depth
-      if (value > bestValue) {
-        bestValue = value;
-        bestMove = move;
+    // Process moves asynchronously to prevent UI freeze
+    let moveIndex = 0;
+    const processMoveBatch = async () => {
+      const batchSize = Math.max(1, Math.ceil(orderedMoves.length / 10)); // Process in batches
+      const endIndex = Math.min(moveIndex + batchSize, orderedMoves.length);
+      
+      for (let i = moveIndex; i < endIndex; i++) {
+        const move = orderedMoves[i];
+        const value = await this.alphaBetaWithDepthAsync(board, move, 2, -Infinity, Infinity, false); // Reduced depth to 2
+        if (value > bestValue) {
+          bestValue = value;
+          bestMove = move;
+        }
       }
-    }
+      
+      moveIndex = endIndex;
+      
+      if (moveIndex < orderedMoves.length) {
+        // Yield control to browser before processing next batch
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return await processMoveBatch();
+      }
+      
+      return bestMove;
+    };
 
-    return bestMove;
+    return await processMoveBatch();
   }
 
   // Advanced move ordering for better alpha-beta pruning
@@ -73,7 +91,72 @@ export class NightmareAI extends ChessAI {
     return priority;
   }
 
-  // Enhanced minimax with transposition table
+  // Enhanced minimax with transposition table (async version to prevent UI freeze)
+  async alphaBetaWithDepthAsync(board, move, depth, alpha, beta, isMaximizing, nodeCount = 0) {
+    const tempBoard = this.makeTemporaryMove(board, move);
+    const boardKey = this.getBoardHash(tempBoard);
+    
+    // Yield control periodically to prevent UI freeze
+    if (nodeCount % 100 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    
+    // Check transposition table
+    if (this.transpositionTable.has(boardKey)) {
+      const cached = this.transpositionTable.get(boardKey);
+      if (cached.depth >= depth) {
+        return cached.value;
+      }
+    }
+    
+    // Base case
+    if (depth === 0) {
+      const value = this.evaluatePositionAdvanced(tempBoard, 'pigs');
+      this.transpositionTable.set(boardKey, { value, depth });
+      return value;
+    }
+
+    const currentTeam = isMaximizing ? 'pigs' : 'birds';
+    const possibleMoves = this.getAllPossibleMoves(tempBoard, currentTeam);
+
+    if (possibleMoves.length === 0) {
+      let value = 0;
+      if (this.isKingInCheck(tempBoard, currentTeam)) {
+        value = isMaximizing ? -10000 + depth : 10000 - depth; // Prefer longer mates when losing, shorter when winning
+      }
+      this.transpositionTable.set(boardKey, { value, depth });
+      return value;
+    }
+
+    // Order moves for better pruning (limit move ordering for performance)
+    const orderedMoves = possibleMoves.length > 20 ? 
+      possibleMoves.slice(0, 20) : // Limit to top 20 moves for performance
+      this.orderMoves(tempBoard, possibleMoves);
+
+    if (isMaximizing) {
+      let maxValue = -Infinity;
+      for (const nextMove of orderedMoves) {
+        const value = await this.alphaBetaWithDepthAsync(tempBoard, nextMove, depth - 1, alpha, beta, false, nodeCount + 1);
+        maxValue = Math.max(maxValue, value);
+        alpha = Math.max(alpha, value);
+        if (beta <= alpha) break; // Alpha-beta pruning
+      }
+      this.transpositionTable.set(boardKey, { value: maxValue, depth });
+      return maxValue;
+    } else {
+      let minValue = Infinity;
+      for (const nextMove of orderedMoves) {
+        const value = await this.alphaBetaWithDepthAsync(tempBoard, nextMove, depth - 1, alpha, beta, true, nodeCount + 1);
+        minValue = Math.min(minValue, value);
+        beta = Math.min(beta, value);
+        if (beta <= alpha) break; // Alpha-beta pruning
+      }
+      this.transpositionTable.set(boardKey, { value: minValue, depth });
+      return minValue;
+    }
+  }
+
+  // Enhanced minimax with transposition table (original synchronous version for reference)
   alphaBetaWithDepth(board, move, depth, alpha, beta, isMaximizing) {
     const tempBoard = this.makeTemporaryMove(board, move);
     const boardKey = this.getBoardHash(tempBoard);
@@ -131,47 +214,84 @@ export class NightmareAI extends ChessAI {
     }
   }
 
-  // Enhanced position evaluation
+  // Enhanced position evaluation (optimized for performance)
   evaluatePositionAdvanced(board, team) {
     let value = 0;
     
-    // Material and positional evaluation
+    // Quick material count first
+    let myMaterial = 0;
+    let opponentMaterial = 0;
+    
+    // Material and basic positional evaluation (optimized loop)
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
         const piece = board[row][col];
         if (piece) {
-          const pieceValue = this.evaluatePieceNightmare(board, row, col);
+          const pieceValue = this.pieceValues[piece.type] || 0;
           if (piece.team === team) {
-            value += pieceValue;
+            myMaterial += pieceValue;
+            value += pieceValue + this.getBasicPositionValue(piece.type, row, col, team);
           } else {
-            value -= pieceValue;
+            opponentMaterial += pieceValue;
+            value -= (pieceValue + this.getBasicPositionValue(piece.type, row, col, piece.team));
           }
         }
       }
     }
 
-    // Advanced strategic factors
-    const gamePhase = this.getGamePhase(board);
-    value += this.evaluateKingSafetyAdvanced(board, team, gamePhase) * 3;
-    value += this.evaluatePawnStructureAdvanced(board, team) * 2;
-    value += this.evaluateControlOfCenter(board, team) * 2;
-    value += this.evaluatePieceCoordination(board, team);
-    value += this.evaluateThreats(board, team) * 1.5;
+    // Only do expensive evaluations if the position is close
+    const materialDifference = Math.abs(myMaterial - opponentMaterial);
+    if (materialDifference < 300) { // Only if position is relatively equal
+      // Advanced strategic factors (reduced intensity)
+      const gamePhase = this.getGamePhase(board);
+      value += this.evaluateKingSafetyAdvanced(board, team, gamePhase) * 2; // Reduced multiplier
+      value += this.evaluateControlOfCenter(board, team);
+      
+      // Only do the most expensive evaluations occasionally
+      if (Math.random() < 0.3) { // 30% chance to do full evaluation
+        value += this.evaluatePawnStructureAdvanced(board, team);
+        value += this.evaluateThreats(board, team);
+      }
+    }
 
-    // Tactical considerations
+    // Always check for checkmate/check (important)
     const opponentTeam = team === 'pigs' ? 'birds' : 'pigs';
-    
-    // Check and mate evaluation
     if (this.isKingInCheck(board, opponentTeam)) {
       if (this.isCheckmate(board, opponentTeam)) {
         value += 10000;
       } else {
-        value += 200; // Strong bonus for check
+        value += 100; // Reduced bonus for check
       }
     }
     
-    // Look for hanging pieces
-    value += this.evaluateHangingPieces(board, team);
+    return value;
+  }
+
+  // Simplified position value calculation
+  getBasicPositionValue(pieceType, row, col, team) {
+    let value = 0;
+    
+    switch (pieceType) {
+      case 'pawn':
+        // Simple advancement bonus
+        const advancement = team === 'pigs' ? row : (7 - row);
+        value += advancement * 10;
+        break;
+      case 'knight':
+      case 'bishop':
+        // Simple center bonus
+        const centerDistance = Math.abs(3.5 - row) + Math.abs(3.5 - col);
+        value += (7 - centerDistance) * 5;
+        break;
+      case 'king':
+        // Keep king safe early, active late
+        if (row === 0 || row === 7) {
+          value += 10; // Slight bonus for back rank
+        }
+        break;
+      default:
+        break;
+    }
     
     return value;
   }
@@ -691,15 +811,35 @@ export class NightmareAI extends ChessAI {
     return value;
   }
 
-  // Nightmare AI takes the longest to think (but still reasonable for gameplay)
-  makeMove(board, onMoveComplete) {
-    const thinkingTime = 3000 + Math.random() * 2000; // 3-5 seconds
+  // Nightmare AI takes time to think but doesn't freeze the UI
+  async makeMove(board, onMoveComplete) {
+    console.log('🔥 Nightmare AI is thinking... (this may take a moment)');
+    const startTime = Date.now();
     
-    setTimeout(() => {
-      const move = this.calculateBestMove(board);
+    try {
+      // Add a small initial delay for dramatic effect
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const move = await this.calculateBestMove(board);
+      const thinkingTime = Date.now() - startTime;
+      
+      console.log(`🧠 Nightmare AI calculated move in ${thinkingTime}ms:`, move);
+      
       if (move) {
-        onMoveComplete(move);
+        // Add a minimum thinking time for dramatic effect (but not too long)
+        const minThinkingTime = 2000; // 2 seconds minimum
+        const remainingTime = Math.max(0, minThinkingTime - thinkingTime);
+        
+        setTimeout(() => {
+          onMoveComplete(move);
+        }, remainingTime);
+      } else {
+        console.error('🔥 Nightmare AI could not find a valid move!');
+        onMoveComplete(null);
       }
-    }, thinkingTime);
+    } catch (error) {
+      console.error('🔥 Nightmare AI encountered an error:', error);
+      onMoveComplete(null);
+    }
   }
 }

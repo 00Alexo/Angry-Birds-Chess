@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { IoArrowBack, IoFlag, IoRefresh, IoHome } from 'react-icons/io5';
 import { 
   RedBird, Stella, YellowBird, BlueBird, BlackBird, WhiteBird,
@@ -9,8 +10,12 @@ import { MediumAI } from './ai/MediumAI.js';
 import { HardAI } from './ai/HardAI.js';
 import { NightmareAI } from './ai/NightmareAI.js';
 import { ImpossibleAI } from './ai/ImpossibleAI.js';
+import socketService from '../services/socketService';
+import simpleSocketService from '../services/simpleSocketService';
+import apiService from '../services/apiService';
 
 const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars, selectedTheme = 'default' }) => {
+  const { user } = useAuth(); // Get user from AuthContext
   // Board theme definitions
   const boardThemes = {
     default: {
@@ -87,7 +92,59 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   const [coinAnimation, setCoinAnimation] = useState({ isAnimating: false, startAmount: 0, endAmount: 0, currentAmount: 0 });
   const [premove, setPremove] = useState(null); // { fromRow, fromCol, toRow, toCol, specialMove, promotionType }
   const [premoveHighlight, setPremoveHighlight] = useState(null); // Highlight premove squares
+  const [gameStartTime, setGameStartTime] = useState(null); // Track when game started
+  const [currentGameId, setCurrentGameId] = useState(null); // Track current game session
   const moveHistoryRef = useRef(null);
+
+  // Refs to store current values for cleanup
+  const gameStateRef = useRef({
+    currentGameId: null,
+    gameStatus: 'playing',
+    gameStartTime: null,
+    moveHistory: [],
+    levelData: null
+  });
+
+  // Update refs when values change
+  useEffect(() => {
+    gameStateRef.current = {
+      currentGameId,
+      gameStatus,
+      gameStartTime,
+      moveHistory,
+      levelData
+    };
+  }, [currentGameId, gameStatus, gameStartTime, moveHistory, levelData]);
+
+  // Helper function to end game using WebSocket
+  const endGameWithHistory = async (result, endReason = 'checkmate', stars = null, coinsEarned = 0) => {
+    if (!currentGameId) {
+      console.warn('No game ID available for ending game');
+      return;
+    }
+
+    try {
+      console.log(`🎯 [Game] Ending game: ${currentGameId}, result: ${result}`);
+      
+      // End the game via WebSocket with user ID
+      await simpleSocketService.endGame(currentGameId, result, {
+  // Some API responses use 'id', not '_id'; include both fallback options
+  userId: user?.id || user?._id,
+        moves: moveHistory.length,
+        coinsEarned,
+        stars,
+        endReason
+      });
+
+      console.log(`✅ [Game] Game ended successfully`);
+      
+      // Clear current game ID
+      setCurrentGameId(null);
+    } catch (error) {
+      console.error('❌ Failed to end game via WebSocket:', error);
+      // Don't block the UI even if ending fails
+    }
+  };
 
   // Check for check status after each move
   useEffect(() => {
@@ -177,10 +234,54 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     setAiInstance(ai);
   }, [levelData?.difficulty]);
 
-  // Initialize the chess board
+  // Initialize new game session with WebSocket
+  useEffect(() => {
+    console.log('🎮 [Game] Initializing new game session...');
+
+    const initializeGame = async () => {
+      try {
+        // Connect to WebSocket for this game
+        await simpleSocketService.connect();
+        
+        // Start the game
+        const gameData = {
+          gameType: levelData?.id ? 'campaign' : 'vs-ai',
+          opponent: levelData?.difficulty || 'easy',
+          levelId: levelData?.id || null,
+          // Include userId at start so backend can store it in activeGames map
+          userId: user?.id || user?._id
+        };
+
+        const response = await simpleSocketService.startGame(gameData);
+        console.log('✅ [Game] Game session created:', response);
+        setCurrentGameId(response.gameId);
+        setIsGameStarted(true);
+
+      } catch (error) {
+        console.error('❌ [Game] Failed to initialize WebSocket game:', error);
+        // Fall back to local-only game
+        const fallbackGameId = `local_${Date.now()}`;
+        setCurrentGameId(fallbackGameId);
+        setIsGameStarted(true);
+        console.log('🔄 [Game] Running in local mode without WebSocket');
+      }
+    };
+
+    initializeGame();
+
+    // Cleanup on unmount
+    return () => {
+      console.log('🧹 [Game] Component unmounting, disconnecting WebSocket');
+      simpleSocketService.disconnect();
+    };
+  }, [levelData]);
+
+  // Track if game has been started to prevent duplicates (React StrictMode causes double execution)
+  const gameStartedRef = useRef(false);
+
   useEffect(() => {
     initializeBoard();
-  }, []);
+  }, [levelData]);
 
   // Timer effect for hard, nightmare, and impossible difficulties
   useEffect(() => {
@@ -195,23 +296,50 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       timerDuration = 15; // Even shorter time for impossible
     }
     
-    if (timerDuration && gameStatus === 'playing') {
+    console.log(`⏰ Timer effect: difficulty=${difficulty}, timerDuration=${timerDuration}, gameStatus=${gameStatus}, isGameStarted=${isGameStarted}`);
+    
+    // Only start timer if game is actually playing and has been started
+    if (timerDuration && gameStatus === 'playing' && isGameStarted) {
+      console.log(`⏰ Starting ${timerDuration}s timer for ${difficulty} difficulty`);
       setTimeRemaining(timerDuration);
       
       const timer = setInterval(() => {
         setTimeRemaining(prev => {
+          console.log(`⏰ Timer tick: ${prev}s remaining`);
           if (prev <= 1) {
             // Time's up!
+            console.log(`⏰ Time's up! currentPlayer=${currentPlayer}`);
             if (currentPlayer === 'birds') {
               // Player runs out of time - they lose
               setGameStatus('checkmate');
               setGameResult('loss');
+              
+              // End game in history with timeout
+              (async () => {
+                await endGameWithHistory('loss', 'timeout', 0, 0);
+              })();
+              
+              // Record game loss with campaign manager
+              if (levelData && gameStartTime) {
+                (async () => {
+                  try {
+                    const { default: campaignManager } = await import('../utils/campaignManager');
+                    const gameDuration = Date.now() - gameStartTime;
+                    await campaignManager.endCampaignGame('loss', gameDuration, levelData.id, 0, 0);
+                    console.log(`⏰ Game lost due to timeout for level ${levelData.id}`);
+                  } catch (error) {
+                    console.error('Failed to record game loss:', error);
+                  }
+                })();
+              }
+              
               setTimeout(() => setShowGameEndModal(true), 500);
               clearInterval(timer);
               setMoveTimer(null);
               return 0;
             } else {
               // AI runs out of time - switch turns (AI doesn't lose on time)
+              console.log('⏰ AI timeout - switching to player turn');
               setCurrentPlayer('birds');
               return timerDuration;
             }
@@ -223,10 +351,15 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       setMoveTimer(timer);
       
       return () => {
-        if (timer) clearInterval(timer);
+        if (timer) {
+          console.log('⏰ Cleaning up timer');
+          clearInterval(timer);
+        }
       };
+    } else {
+      console.log('⏰ No timer started - conditions not met');
     }
-  }, [currentPlayer, gameStatus, levelData?.difficulty]);
+  }, [gameStatus, levelData?.difficulty, isGameStarted]); // Removed currentPlayer from dependencies
 
   const getPositionName = (row, col) => {
     const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -565,6 +698,14 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     setLastMove(moveData);
     
     setMoveHistory(prev => [...prev, moveData]);
+    // Notify backend a move occurred for abandonment tracking
+    if (currentGameId) {
+      try {
+        simpleSocketService.socket?.emit('game-move', { gameId: currentGameId });
+      } catch (e) {
+        // non-fatal
+      }
+    }
     
     // Save position for repetition detection
     savePositionToHistory(newBoard, currentPlayer === 'birds' ? 'pigs' : 'birds');
@@ -578,6 +719,12 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       if (aiInstance.hasInsufficientMaterial(newBoard)) {
         setGameStatus('stalemate');
         setGameResult('draw');
+        
+        // End game in history with draw
+        (async () => {
+          const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+          await endGameWithHistory('draw', 'insufficient-material', levelData ? 1 : null, coinsEarned);
+        })();
         
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
@@ -606,6 +753,12 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
         setGameStatus('stalemate');
         setGameResult('draw');
         
+        // End game in history with draw
+        (async () => {
+          const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+          await endGameWithHistory('draw', 'threefold-repetition', levelData ? 1 : null, coinsEarned);
+        })();
+        
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
           const baseCoins = calculateCoinReward();
@@ -633,6 +786,12 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
         setGameStatus('stalemate');
         setGameResult('draw');
         
+        // End game in history with draw
+        (async () => {
+          const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+          await endGameWithHistory('draw', 'fifty-move-rule', levelData ? 1 : null, coinsEarned);
+        })();
+        
         // Award partial coins for draw
         if (levelData && addCoins && completeLevelWithStars) {
           const baseCoins = calculateCoinReward();
@@ -646,6 +805,20 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
             endAmount: currentCoins + coinsEarned,
             currentAmount: currentCoins
           });
+          
+          // Record the draw game
+          if (gameStartTime) {
+            (async () => {
+              try {
+                const { default: campaignManager } = await import('../utils/campaignManager');
+                const gameDuration = Date.now() - gameStartTime;
+                await campaignManager.endCampaignGame('draw', gameDuration, levelData.id, 0, coinsEarned);
+                console.log(`🤝 Game ended in draw (50-move rule) for level ${levelData.id}`);
+              } catch (error) {
+                console.error('Failed to record game draw:', error);
+              }
+            })();
+          }
           
           completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
           console.log(`🤝 Draw by 50-move rule! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
@@ -676,15 +849,44 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
             currentAmount: currentCoins
           });
           
-          // Complete level using campaign manager directly
+          // For campaign games, use campaign manager which handles both game ending and level completion
+          if (levelData.id && levelData.id !== 'undefined' && levelData.id !== null) {
+            console.log(`🎯 Campaign game won - using campaign manager for level ${levelData.id}`);
+            
+            (async () => {
+              try {
+                const { default: campaignManager } = await import('../utils/campaignManager');
+                const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);
+                console.log(`✅ Campaign level ${levelData.id} completed:`, result);
+              } catch (error) {
+                console.error(`❌ Failed to complete campaign level ${levelData.id}:`, error);
+                // Fallback to just ending the game
+                await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
+              }
+            })();
+          } else {
+            // For non-campaign games, just end the game
+            console.log(`🎯 Non-campaign game won - ending game only`);
+            (async () => {
+              await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
+            })();
+          }
+        } else if (!isPlayerWin && levelData && gameStartTime) {
+          // Player lost - always just record the loss (no campaign completion)
+          console.log(`💀 Game lost - ending game only`);
           (async () => {
-            try {
-              const { default: campaignManager } = await import('../utils/campaignManager');
-              const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned);
-              console.log(`� Level ${levelData.id} completed via CampaignManager:`, result);
-            } catch (error) {
-              console.error(`❌ Failed to complete level ${levelData.id}:`, error);
-            }
+            await endGameWithHistory('loss', 'checkmate', 0, 0);
+          })();
+        } else if (!isPlayerWin && gameStartTime) {
+          // Non-campaign game loss
+          console.log(`💀 Non-campaign game lost - ending game only`);
+          (async () => {
+            await endGameWithHistory('loss', 'checkmate', 0, 0);
+          })();
+        } else if (gameStartTime) {
+          // Non-campaign game ended
+          (async () => {
+            await endGameWithHistory(isPlayerWin ? 'win' : 'loss', 'checkmate', null, isPlayerWin ? 50 : 0);
           })();
         }
         
@@ -702,6 +904,12 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           setGameStatus('stalemate');
           setGameResult('draw');
           
+          // End game in history with draw
+          (async () => {
+            const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25; // Half coins for draw
+            await endGameWithHistory('draw', 'stalemate', levelData ? 1 : null, coinsEarned);
+          })();
+          
           // Award partial coins for draw but DON'T complete the level
           if (levelData && addCoins) {
             const baseCoins = calculateCoinReward();
@@ -715,6 +923,20 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
               endAmount: currentCoins + coinsEarned,
               currentAmount: currentCoins
             });
+            
+            // Record the draw game
+            if (gameStartTime) {
+              (async () => {
+                try {
+                  const { default: campaignManager } = await import('../utils/campaignManager');
+                  const gameDuration = Date.now() - gameStartTime;
+                  await campaignManager.endCampaignGame('draw', gameDuration, levelData.id, 0, coinsEarned);
+                  console.log(`🤝 Game ended in stalemate for level ${levelData.id}`);
+                } catch (error) {
+                  console.error('Failed to record game draw:', error);
+                }
+              })();
+            }
             
             // Only add coins, don't complete level - stalemate doesn't count as a campaign win
             addCoins(coinsEarned);
@@ -747,10 +969,22 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
             (async () => {
               try {
                 const { default: campaignManager } = await import('../utils/campaignManager');
-                const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned);
+                const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);
                 console.log(`🏆 Level ${levelData.id} completed via CampaignManager (missed checkmate):`, result);
               } catch (error) {
                 console.error(`❌ Failed to complete level ${levelData.id}:`, error);
+              }
+            })();
+          } else if (!isPlayerWin && levelData && gameStartTime) {
+            // Player lost - record the loss
+            (async () => {
+              try {
+                const { default: campaignManager } = await import('../utils/campaignManager');
+                const gameDuration = Date.now() - gameStartTime;
+                await campaignManager.endCampaignGame('loss', gameDuration, levelData.id, 0, 0);
+                console.log(`💀 Game lost by checkmate (missed case) for level ${levelData.id}`);
+              } catch (error) {
+                console.error('Failed to record game loss:', error);
               }
             })();
           }

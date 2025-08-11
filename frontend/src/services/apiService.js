@@ -201,6 +201,41 @@ class ApiService {
     });
   }
 
+  // Game session endpoints
+  async startGame(gameType, opponent = null, levelId = null, energySpent = 1) {
+    return this.request('/game/start-game', {
+      method: 'POST',
+      body: JSON.stringify({ gameType, opponent, levelId, energySpent }),
+    });
+  }
+
+  async endGame(gameData) {
+    return this.request('/game/end-game', {
+      method: 'POST',
+      body: JSON.stringify(gameData),
+    });
+  }
+
+  async getGameHistory(limit = 50, offset = 0, gameType = null, result = null) {
+    const params = new URLSearchParams();
+    params.append('limit', limit);
+    params.append('offset', offset);
+    if (gameType) params.append('gameType', gameType);
+    if (result) params.append('result', result);
+
+    return this.request(`/game/game-history?${params.toString()}`);
+  }
+
+  async markUnfinishedGamesAsLosses() {
+    return this.request('/game/mark-unfinished-as-losses', {
+      method: 'POST',
+    });
+  }
+
+  async getUnfinishedGamesCount() {
+    return this.request('/game/unfinished-games-count');
+  }
+
   // Utility methods
   isAuthenticated() {
     return !!this.token;

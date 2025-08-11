@@ -5,8 +5,8 @@ export class HardAI extends ChessAI {
     super('hard');
   }
 
-  // Hard AI: Advanced evaluation with deeper search
-  calculateBestMove(board) {
+  // Hard AI: Advanced evaluation with deeper search (async to prevent UI freeze)
+  async calculateBestMove(board) {
     const allPossibleMoves = this.getAllPossibleMoves(board, 'pigs');
     
     if (allPossibleMoves.length === 0) return null;
@@ -15,18 +15,105 @@ export class HardAI extends ChessAI {
     let bestMove = null;
     let bestValue = -Infinity;
 
-    for (const move of allPossibleMoves) {
-      const value = this.minimax(board, move, 2, -Infinity, Infinity, false); // 2-move depth
-      if (value > bestValue) {
-        bestValue = value;
-        bestMove = move;
+    // Process moves in batches to prevent UI freeze
+    let moveIndex = 0;
+    const processMoveBatch = async () => {
+      const batchSize = Math.max(1, Math.ceil(allPossibleMoves.length / 8)); // Process in batches
+      const endIndex = Math.min(moveIndex + batchSize, allPossibleMoves.length);
+      
+      for (let i = moveIndex; i < endIndex; i++) {
+        const move = allPossibleMoves[i];
+        const value = await this.minimaxAsync(board, move, 2, -Infinity, Infinity, false); // 2-move depth
+        if (value > bestValue) {
+          bestValue = value;
+          bestMove = move;
+        }
       }
-    }
+      
+      moveIndex = endIndex;
+      
+      if (moveIndex < allPossibleMoves.length) {
+        // Yield control to browser before processing next batch
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return await processMoveBatch();
+      }
+      
+      return bestMove;
+    };
 
-    return bestMove;
+    return await processMoveBatch();
   }
 
-  // Minimax algorithm with alpha-beta pruning
+  // Minimax algorithm with alpha-beta pruning (async version to prevent UI freeze)
+  async minimaxAsync(board, move, depth, alpha, beta, isMaximizing, nodeCount = 0) {
+    const tempBoard = this.makeTemporaryMove(board, move);
+    
+    // Yield control periodically to prevent UI freeze
+    if (nodeCount % 50 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    
+    // Base case: evaluate position
+    if (depth === 0) {
+      return this.evaluatePosition(tempBoard, 'pigs');
+    }
+
+    const currentTeam = isMaximizing ? 'pigs' : 'birds';
+    const possibleMoves = this.getAllPossibleMoves(tempBoard, currentTeam);
+
+    if (possibleMoves.length === 0) {
+      // No moves available - check for checkmate
+      if (this.isKingInCheck(tempBoard, currentTeam)) {
+        return isMaximizing ? -9999 : 9999; // Checkmate
+      }
+      return 0; // Stalemate
+    }
+
+    // Limit number of moves for performance
+    const movesToConsider = possibleMoves.length > 15 ? 
+      this.orderMovesByCaptures(possibleMoves, tempBoard).slice(0, 15) : 
+      possibleMoves;
+
+    if (isMaximizing) {
+      let maxValue = -Infinity;
+      for (const nextMove of movesToConsider) {
+        const value = await this.minimaxAsync(tempBoard, nextMove, depth - 1, alpha, beta, false, nodeCount + 1);
+        maxValue = Math.max(maxValue, value);
+        alpha = Math.max(alpha, value);
+        if (beta <= alpha) break; // Alpha-beta pruning
+      }
+      return maxValue;
+    } else {
+      let minValue = Infinity;
+      for (const nextMove of movesToConsider) {
+        const value = await this.minimaxAsync(tempBoard, nextMove, depth - 1, alpha, beta, true, nodeCount + 1);
+        minValue = Math.min(minValue, value);
+        beta = Math.min(beta, value);
+        if (beta <= alpha) break; // Alpha-beta pruning
+      }
+      return minValue;
+    }
+  }
+
+  // Simple move ordering to prioritize captures
+  orderMovesByCaptures(moves, board) {
+    return moves.sort((a, b) => {
+      const aPiece = board[a.toRow][a.toCol];
+      const bPiece = board[b.toRow][b.toCol];
+      
+      // Prioritize captures
+      if (aPiece && !bPiece) return -1;
+      if (!aPiece && bPiece) return 1;
+      if (aPiece && bPiece) {
+        // Higher value captures first
+        return (this.pieceValues[bPiece.type] || 0) - (this.pieceValues[aPiece.type] || 0);
+      }
+      
+      return 0; // No preference
+    });
+  }
+
+  // Minimax algorithm with alpha-beta pruning (original synchronous version)
   minimax(board, move, depth, alpha, beta, isMaximizing) {
     const tempBoard = this.makeTemporaryMove(board, move);
     
@@ -78,27 +165,43 @@ export class HardAI extends ChessAI {
   evaluatePosition(board, team) {
     let value = 0;
     
-    // Material evaluation
+    // Material evaluation (optimized)
+    let myMaterial = 0;
+    let opponentMaterial = 0;
+    
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
         const piece = board[row][col];
         if (piece) {
-          const pieceValue = this.evaluatePieceAdvanced(board, row, col);
+          const basicValue = this.pieceValues[piece.type] || 0;
+          const positionalBonus = this.getQuickPositionalBonus(piece.type, row, col, piece.team);
+          const totalValue = basicValue + positionalBonus;
+          
           if (piece.team === team) {
-            value += pieceValue;
+            myMaterial += basicValue;
+            value += totalValue;
           } else {
-            value -= pieceValue;
+            opponentMaterial += basicValue;
+            value -= totalValue;
           }
         }
       }
     }
 
-    // Strategic bonuses
-    value += this.evaluateKingSafety(board, team) * 2;
-    value += this.evaluatePawnStructure(board, team);
-    value += this.evaluateControlOfCenter(board, team) * 1.5;
+    // Only do expensive evaluations if position is relatively balanced
+    const materialDifference = Math.abs(myMaterial - opponentMaterial);
+    if (materialDifference < 400) { // Only if close game
+      // Strategic bonuses (reduced intensity)
+      value += this.evaluateKingSafety(board, team);
+      value += this.evaluateControlOfCenter(board, team);
+      
+      // Only occasionally do full pawn structure analysis
+      if (Math.random() < 0.4) { // 40% chance
+        value += this.evaluatePawnStructure(board, team);
+      }
+    }
 
-    // Check and checkmate detection
+    // Always check for checkmate/check (important)
     const opponentTeam = team === 'pigs' ? 'birds' : 'pigs';
     if (this.isKingInCheck(board, opponentTeam)) {
       if (this.isCheckmate(board, opponentTeam)) {
@@ -109,6 +212,33 @@ export class HardAI extends ChessAI {
     }
 
     return value;
+  }
+
+  // Quick positional evaluation without complex calculations
+  getQuickPositionalBonus(pieceType, row, col, team) {
+    let bonus = 0;
+    
+    switch (pieceType) {
+      case 'pawn':
+        // Simple advancement bonus
+        const advancement = team === 'pigs' ? row : (7 - row);
+        bonus += advancement * 8;
+        break;
+      case 'knight':
+      case 'bishop':
+        // Simple center control bonus
+        const centerDistance = Math.abs(3.5 - row) + Math.abs(3.5 - col);
+        bonus += (7 - centerDistance) * 3;
+        break;
+      case 'king':
+        // Keep king safe
+        if (row === 0 || row === 7) {
+          bonus += 5; // Back rank safety
+        }
+        break;
+    }
+    
+    return bonus;
   }
 
   evaluatePieceAdvanced(board, row, col) {
@@ -356,15 +486,35 @@ export class HardAI extends ChessAI {
     return true;
   }
 
-  // Hard AI thinks even longer
-  makeMove(board, onMoveComplete) {
-    const thinkingTime = 2000 + Math.random() * 2000; // 2-4 seconds
+  // Hard AI thinks strategically but doesn't freeze the UI
+  async makeMove(board, onMoveComplete) {
+    console.log('🔴 Hard AI is analyzing the position...');
+    const startTime = Date.now();
     
-    setTimeout(() => {
-      const move = this.calculateBestMove(board);
+    try {
+      // Add a small initial delay
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const move = await this.calculateBestMove(board);
+      const thinkingTime = Date.now() - startTime;
+      
+      console.log(`🧠 Hard AI calculated move in ${thinkingTime}ms:`, move);
+      
       if (move) {
-        onMoveComplete(move);
+        // Add minimum thinking time for strategic feel
+        const minThinkingTime = 1500; // 1.5 seconds minimum
+        const remainingTime = Math.max(0, minThinkingTime - thinkingTime);
+        
+        setTimeout(() => {
+          onMoveComplete(move);
+        }, remainingTime);
+      } else {
+        console.error('🔴 Hard AI could not find a valid move!');
+        onMoveComplete(null);
       }
-    }, thinkingTime);
+    } catch (error) {
+      console.error('🔴 Hard AI encountered an error:', error);
+      onMoveComplete(null);
+    }
   }
 }

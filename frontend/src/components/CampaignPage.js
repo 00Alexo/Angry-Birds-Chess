@@ -832,8 +832,26 @@ const CampaignPage = ({
         console.log(`🎯 Debug failed. Purchase tokens from the Shop instead. Current tokens: ${playerInventory.levelSkipTokens || 0}`);
       }
     };
+    // Debug function to check unlock status
+    window.debugUnlockStatus = () => {
+      console.log('🔍 DEBUGGING LEVEL UNLOCK STATUS:');
+      campaignLevels.forEach(level => {
+        const unlocked = isLevelUnlocked(level, campaignLevels);
+        const completed = isLevelCompleted(level.id);
+        const pathsToLevel = mapPaths.filter(path => path.to === level.id);
+        console.log(`Level ${level.id}: unlocked=${unlocked}, completed=${completed}, prerequisites=[${pathsToLevel.map(p => p.from).join(', ')}]`);
+      });
+      
+      console.log('\n🔗 MAP PATHS:');
+      mapPaths.forEach(path => {
+        const fromCompleted = isLevelCompleted(path.from);
+        console.log(`${path.from} -> ${path.to} (${path.from} completed: ${fromCompleted})`);
+      });
+    };
+
     // Print available debug commands
     console.log('🧪🧪🧪 DEBUG COMMANDS AVAILABLE 🧪🧪🧪');
+    console.log('🧪 window.debugUnlockStatus() - check which levels are unlocked and why');
     console.log('🧪 window.debugCompleteLevel(levelId, stars, coins) - directly complete a level');
     console.log('🧪 window.debugSkipLevel(levelId) - test level skip functionality');  
     console.log('🧪 window.giveLevelSkipTokens(amount) - add skip tokens for testing');
@@ -872,15 +890,30 @@ const CampaignPage = ({
     }
   });
 
-  // Dynamic level unlocking logic
+  // Dynamic level unlocking logic based on map paths
   const isLevelUnlocked = (level, allLevels) => {
     if (level.id === 1) return true; // First level always unlocked
     
-    // Check if previous level is completed
-    const prevLevelCompleted = isLevelCompleted(level.id - 1);
-    console.log(`🔍 Checking if level ${level.id} is unlocked: prev level ${level.id - 1} completed = ${prevLevelCompleted}`);
+    // Find all paths that lead TO this level
+    const pathsToThisLevel = mapPaths.filter(path => path.to === level.id);
     
-    return prevLevelCompleted;
+    // If no paths lead to this level, it should not be unlocked
+    if (pathsToThisLevel.length === 0) {
+      console.log(`🔍 Level ${level.id} has no incoming paths - should not be unlocked`);
+      return false;
+    }
+    
+    // Check if ANY of the prerequisite levels is completed
+    const hasCompletedPrerequisite = pathsToThisLevel.some(path => {
+      const prerequisiteCompleted = isLevelCompleted(path.from);
+      console.log(`🔍 Checking prerequisite: Level ${path.from} -> Level ${level.id}, completed: ${prerequisiteCompleted}`);
+      return prerequisiteCompleted;
+    });
+    
+    console.log(`🔍 Level ${level.id} unlock check: has completed prerequisite = ${hasCompletedPrerequisite}`);
+    console.log(`🔍 Prerequisites for level ${level.id}:`, pathsToThisLevel.map(p => p.from));
+    
+    return hasCompletedPrerequisite;
   };
 
   // More complex path network

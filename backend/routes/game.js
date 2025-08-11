@@ -7,6 +7,13 @@ const router = express.Router();
 // All routes are protected
 router.use(auth);
 
+// Game session routes
+router.post('/start-game', gameController.startGame);
+router.post('/end-game', gameController.endGame);
+router.get('/game-history', gameController.getGameHistory);
+router.post('/mark-unfinished-as-losses', gameController.markUnfinishedGamesAsLosses);
+router.get('/unfinished-games-count', gameController.getUnfinishedGamesCount);
+
 // Player data routes
 router.get('/player-data', gameController.getPlayerData);
 router.put('/player-data', gameController.updatePlayerData);

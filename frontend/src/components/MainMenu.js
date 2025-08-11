@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { IoInformationCircle, IoPerson, IoPeople, IoClose, IoSpeedometer, IoShield, IoFlame, IoSkull, IoMap, IoSettings, IoCash, IoStorefront, IoBatteryHalf, IoAdd, IoTime } from 'react-icons/io5';
+import { IoInformationCircle, IoPerson, IoPeople, IoClose, IoSpeedometer, IoShield, IoFlame, IoSkull, IoMap, IoSettings, IoCash, IoStorefront, IoBatteryHalf, IoAdd, IoTime, IoLogOut } from 'react-icons/io5';
 import { 
   RedBird, Stella, YellowBird, BlueBird, BlackBird, WhiteBird,
   KingPig, QueenPig, CorporalPig, ForemanPig, NinjaPig, RegularPig 
@@ -14,6 +14,7 @@ const MainMenu = ({
   onShowCampaign, 
   onShowTesting,
   onShowShop,
+  onShowProfile,
   onLogout,
   playerInventory,
   purchaseEnergy,
@@ -26,6 +27,7 @@ const MainMenu = ({
   const [showSingleplayerModal, setShowSingleplayerModal] = useState(false);
   const [showEnergyPurchase, setShowEnergyPurchase] = useState(false);
   const [showThemeSelector, setShowThemeSelector] = useState(false);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [selectedTheme, setSelectedTheme] = useState('default');
 
   // Available board themes
@@ -115,6 +117,20 @@ const MainMenu = ({
     }
   }, [getSelectedTheme]);
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showUserDropdown && !event.target.closest('.user-dropdown-container')) {
+        setShowUserDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showUserDropdown]);
+
   // Handle theme selection
   const handleThemeChange = async (themeId) => {
     setSelectedTheme(themeId);
@@ -201,7 +217,7 @@ const MainMenu = ({
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-400 via-green-300 to-blue-500 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-sky-400 via-green-300 to-blue-500 p-2">
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute top-10 left-10 w-20 h-12 bg-white rounded-full opacity-70 animate-pulse"></div>
@@ -209,40 +225,67 @@ const MainMenu = ({
         <div className="absolute bottom-20 left-20 w-24 h-14 bg-white rounded-full opacity-50 animate-pulse" style={{animationDelay: '2s'}}></div>
       </div>
 
-      {/* Top Bar with User Info and Logout */}
-      <div className="relative z-30 flex justify-between items-center mb-2">
-        {/* User Info */}
-        <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md rounded-lg px-3 py-2 border border-white/40">
-          <IoPerson className="text-white w-4 h-4" />
-          <span className="text-white font-medium text-sm">
-            {userName || 'Player'}
-          </span>
+      {/* Top Bar with User Info and Energy Display */}
+      <div className="relative z-30 flex justify-between items-center mb-1">
+        {/* User Info with Dropdown */}
+        <div className="relative user-dropdown-container">
+          <button
+            onClick={() => setShowUserDropdown(!showUserDropdown)}
+            className="flex items-center gap-2 bg-black/60 backdrop-blur-md rounded-lg px-3 py-2 border border-white/40 hover:border-white/60 transition-all duration-200"
+          >
+            <IoPerson className="text-white w-4 h-4" />
+            <span className="text-white font-medium text-sm">
+              {userName || 'Player'}
+            </span>
+            <div className={`text-white transition-transform duration-200 text-xs ${showUserDropdown ? 'rotate-180' : ''}`}>
+              ▼
+            </div>
+          </button>
+
+          {/* User Dropdown Menu */}
+          {showUserDropdown && (
+            <div className="absolute left-0 top-full mt-2 bg-black/80 backdrop-blur-md rounded-lg border border-white/40 shadow-2xl z-50 min-w-40">
+              <div className="py-2">
+                <button
+                  onClick={() => {
+                    setShowUserDropdown(false);
+                    if (onShowProfile) {
+                      onShowProfile();
+                    }
+                  }}
+                  className="w-full text-left px-4 py-2 text-white hover:bg-white/10 transition-colors flex items-center gap-2"
+                >
+                  <IoPerson className="w-4 h-4" />
+                  Profile
+                </button>
+                <button
+                  onClick={() => {
+                    setShowUserDropdown(false);
+                    onLogout();
+                  }}
+                  className="w-full text-left px-4 py-2 text-red-300 hover:bg-red-500/20 transition-colors flex items-center gap-2"
+                >
+                  <IoLogOut className="w-4 h-4" />
+                  Logout
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Logout Button */}
-        <button
-          onClick={onLogout}
-          className="bg-red-500/80 hover:bg-red-600/80 backdrop-blur-md text-white px-3 py-2 rounded-lg border border-red-400/50 transition-all duration-200 text-sm font-medium"
-        >
-          Logout
-        </button>
-      </div>
-
-      {/* Responsive Status Bar */}
-      {playerInventory && (
-        <div className="relative z-20 flex justify-end p-2 sm:p-4">
-          {/* Mobile Layout - Stack vertically on small screens */}
-          <div className="hidden sm:flex items-center gap-3 lg:gap-4 bg-black/60 backdrop-blur-md rounded-xl px-4 py-2 border-2 border-white/40 shadow-2xl flex-wrap max-w-full">
-            {/* Coins - Always visible */}
+        {/* Energy Display and Theme */}
+        {playerInventory && (
+          <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md rounded-lg px-4 py-2 border border-white/40">
+            {/* Coins */}
             <div className="flex items-center gap-2 bg-yellow-500/20 px-3 py-1.5 rounded-lg border border-yellow-400/50">
-              <IoCash className="text-yellow-300 w-4 h-4 sm:w-5 sm:h-5" />
-              <span className="text-yellow-100 font-bold text-sm sm:text-base">{playerInventory.coins?.toLocaleString() || 0}</span>
+              <IoCash className="text-yellow-300 w-4 h-4" />
+              <span className="text-yellow-100 font-bold text-sm">{playerInventory.coins?.toLocaleString() || 0}</span>
             </div>
             
-            {/* Energy Display - Always visible */}
+            {/* Energy Display */}
             <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1.5 rounded-lg border border-blue-400/50">
-              <IoBatteryHalf className="text-blue-300 w-4 h-4 sm:w-5 sm:h-5" />
-              <span className="text-blue-100 font-bold text-sm sm:text-base">
+              <IoBatteryHalf className="text-blue-300 w-4 h-4" />
+              <span className="text-blue-100 font-bold text-sm">
                 {playerInventory.energy || 0}/{playerInventory.maxEnergy || 100}
               </span>
               {playerInventory.energy < playerInventory.maxEnergy && (
@@ -255,41 +298,16 @@ const MainMenu = ({
                 </button>
               )}
             </div>
-            
-            {/* Optional items - show only when they exist and there's space */}
-            {timeUntilNextEnergy > 0 && playerInventory.energy < playerInventory.maxEnergy && (
-              <div className="hidden lg:flex items-center gap-1 bg-cyan-500/20 px-2 py-1 rounded-lg border border-cyan-400/50">
-                <IoTime className="text-cyan-300 w-3 h-3" />
-                <span className="text-cyan-200 font-bold text-xs">
-                  {formatTimeUntilEnergy(timeUntilNextEnergy)}
-                </span>
-              </div>
-            )}
-            
-            {getEnergyBoostTimeLeft() && (
-              <div className="hidden lg:flex items-center gap-1 bg-green-500/20 px-2 py-1 rounded-lg border border-green-400/50">
-                <IoTime className="text-green-300 w-3 h-3" />
-                <span className="text-green-100 font-bold text-xs">{getEnergyBoostTimeLeft()}</span>
-              </div>
-            )}
-            
+
+            {/* Level Skip Tokens */}
             {(playerInventory.levelSkipTokens > 0) && (
               <div className="flex items-center gap-1 bg-purple-500/20 px-2 py-1 rounded-lg border border-purple-400/50">
                 <IoAdd className="text-purple-300 w-3 h-3 rotate-45" />
                 <span className="text-purple-100 font-bold text-xs">{playerInventory.levelSkipTokens}</span>
               </div>
             )}
-            
-            {(playerInventory.coinMultiplier && 
-              playerInventory.coinMultiplier.active && 
-              playerInventory.coinMultiplier.usesRemaining > 0) && (
-              <div className="flex items-center gap-1 bg-amber-500/20 px-2 py-1 rounded-lg border border-amber-400/50">
-                <IoCash className="text-amber-300 w-3 h-3" />
-                <span className="text-amber-100 font-bold text-xs">×{playerInventory.coinMultiplier.multiplier}</span>
-              </div>
-            )}
-            
-            {/* Theme Button - Always visible */}
+
+            {/* Theme Button */}
             <button
               onClick={() => setShowThemeSelector(!showThemeSelector)}
               className="p-2 text-white bg-slate-600/60 hover:bg-slate-500/60 transition-colors rounded-lg border border-slate-400/50 hover:border-slate-300/50 shadow-sm"
@@ -298,33 +316,13 @@ const MainMenu = ({
               🎨
             </button>
           </div>
-
-          {/* Mobile Compact Layout */}
-          <div className="flex sm:hidden items-center gap-2 bg-black/60 backdrop-blur-md rounded-lg px-3 py-2 border-2 border-white/40 shadow-2xl">
-            <div className="flex items-center gap-1 text-yellow-100">
-              <IoCash className="text-yellow-300 w-4 h-4" />
-              <span className="font-bold text-sm">{playerInventory.coins?.toLocaleString() || 0}</span>
-            </div>
-            <div className="w-px h-4 bg-white/30"></div>
-            <div className="flex items-center gap-1 text-blue-100">
-              <IoBatteryHalf className="text-blue-300 w-4 h-4" />
-              <span className="font-bold text-sm">{playerInventory.energy || 0}/{playerInventory.maxEnergy || 100}</span>
-            </div>
-            <button
-              onClick={() => setShowThemeSelector(!showThemeSelector)}
-              className="p-1.5 text-white bg-slate-600/60 hover:bg-slate-500/60 transition-colors rounded border border-slate-400/50 text-sm"
-              title="Themes"
-            >
-              🎨
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className={`relative z-10 h-full transform transition-all duration-1000 ${showAnimation ? 'scale-100 opacity-100' : 'scale-90 opacity-0'}`}>
         
         {/* Responsive Header */}
-        <div className="text-center mb-4 sm:mb-6 lg:mb-8 px-4">
+        <div className="text-center mb-2 sm:mb-3 lg:mb-4 px-4">
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-7xl font-bold game-title mb-2">
             ANGRY BIRDS CHESS
           </h1>

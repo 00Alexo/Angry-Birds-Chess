@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginSignupPage from './components/LoginSignupPage';
 import MainMenu from './components/MainMenu';
@@ -8,7 +8,9 @@ import CampaignPage from './components/CampaignPage';
 import ChessBoardPage from './components/ChessBoardPage';
 import EnergyTestPage from './components/EnergyTestPage';
 import ShopPage from './components/ShopPage';
+import ProfilePage from './components/ProfilePage';
 import { usePlayerInventory, useCampaignProgress } from './hooks/useGameData';
+import socketService from './services/socketService';
 
 // Main App Component wrapped with Auth
 function AppContent() {
@@ -19,14 +21,25 @@ function AppContent() {
   const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
   const [authError, setAuthError] = useState('');
   const [authIsLoading, setAuthIsLoading] = useState(false);
+  const [profileUsername, setProfileUsername] = useState(null);
   
-  // Check for testing route in URL
-  React.useEffect(() => {
+  // Note: WebSocket connections are now handled per-game in ChessBoardPage
+  // No persistent WebSocket connection needed
+
+  // Parse URL for routing (including /profile/:username)
+  useEffect(() => {
     const path = window.location.pathname;
     if (path === '/testing' && isAuthenticated) {
       setCurrentScreen('energy-test');
+    } else if (path.startsWith('/profile/')) {
+      const username = decodeURIComponent(path.replace('/profile/', ''));
+      setProfileUsername(username);
+      setCurrentScreen('profile');
+    } else if (path === '/profile' && isAuthenticated) {
+      setProfileUsername(user?.username || null);
+      setCurrentScreen('profile');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, user]);
   
   // Use custom hooks for data management (only when authenticated)
   const { 
@@ -200,6 +213,20 @@ function AppContent() {
     window.history.pushState(null, null, '/shop');
   };
 
+  // Show own profile
+  const handleShowProfile = () => {
+    setProfileUsername(user?.username || null);
+    setCurrentScreen('profile');
+    window.history.pushState(null, null, '/profile');
+  };
+
+  // Show any user's profile
+  const handleShowAnyProfile = (username) => {
+    setProfileUsername(username);
+    setCurrentScreen('profile');
+    window.history.pushState(null, null, `/profile/${encodeURIComponent(username)}`);
+  };
+
   const handleBackToCampaign = () => {
     setCurrentScreen('campaign');
     setSelectedLevel(null);
@@ -266,6 +293,15 @@ function AppContent() {
             refreshPlayerData={refreshPlayerData}
           />
         );
+      case 'profile':
+        return (
+          <ProfilePage 
+            onBack={handleBackToMenu}
+            playerInventory={playerInventory}
+            userName={profileUsername || user?.username}
+            onShowAnyProfile={handleShowAnyProfile}
+          />
+        );
       default:
         return (
           <MainMenu 
@@ -275,6 +311,7 @@ function AppContent() {
             onShowCampaign={handleShowCampaign}
             onShowTesting={handleShowTesting}
             onShowShop={handleShowShop}
+            onShowProfile={handleShowProfile}
             onLogout={handleLogout}
             playerInventory={playerInventory}
             purchaseEnergy={purchaseEnergy}

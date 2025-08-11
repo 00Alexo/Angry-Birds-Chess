@@ -1,3 +1,30 @@
+// Get public user profile by username
+const getUserProfile = async (req, res) => {
+  try {
+    const { username } = req.params;
+    console.log(`[PROFILE API] Requested username:`, username);
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required.' });
+    }
+    // Case-insensitive username search
+    const user = await User.findOne({ username: { $regex: `^${username}$`, $options: 'i' } });
+    if (!user) {
+      console.log(`[PROFILE API] User not found:`, username);
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    console.log(`[PROFILE API] User found:`, user.username);
+    res.json({
+      username: user.username,
+      playerData: user.playerData,
+      gameStats: user.getGameStats(),
+      gameHistory: user.gameHistory.slice(-10), // Last 10 games for profile preview
+      createdAt: user.createdAt
+    });
+  } catch (err) {
+    console.error('[PROFILE API] Server error:', err);
+    res.status(500).json({ error: 'Server error.' });
+  }
+};
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
@@ -205,5 +232,6 @@ module.exports = {
   register,
   login,
   getCurrentUser,
-  verifyToken
+  verifyToken,
+  getUserProfile
 };
