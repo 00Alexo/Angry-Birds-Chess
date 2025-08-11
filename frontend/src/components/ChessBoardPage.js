@@ -894,8 +894,34 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
         
         // Award coins for winning and save level progress
         if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
-          const coinsEarned = calculateCoinReward();
-          const currentCoins = playerInventory?.coins || 0;
+          // Check if this is a replay (level already completed) for campaign games
+          const calculateFinalCoins = async () => {
+            let coinsEarned = calculateCoinReward();
+            
+            if (levelData.id) {
+              try {
+                const { default: campaignManager } = await import('../utils/campaignManager');
+                await campaignManager.loadProgress(); // Ensure progress is loaded
+                const isAlreadyCompleted = campaignManager.isLevelCompleted(levelData.id);
+                
+                if (isAlreadyCompleted) {
+                  console.log(`🔄 Level ${levelData.id} is a replay - setting coins to 0`);
+                  coinsEarned = 0;
+                } else {
+                  console.log(`🆕 Level ${levelData.id} is first completion - awarding ${coinsEarned} coins`);
+                }
+              } catch (error) {
+                console.error('❌ Failed to check completion status, awarding coins anyway:', error);
+                // Keep original coinsEarned value as fallback
+              }
+            }
+            
+            return coinsEarned;
+          };
+
+          (async () => {
+            const coinsEarned = await calculateFinalCoins();
+            const currentCoins = playerInventory?.coins || 0;
           
           // Start coin animation
           setCoinAnimation({
@@ -909,24 +935,21 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           if (levelData.id && levelData.id !== 'undefined' && levelData.id !== null) {
             console.log(`🎯 Campaign game won - using campaign manager for level ${levelData.id}`);
             
-            (async () => {
-              try {
-                const { default: campaignManager } = await import('../utils/campaignManager');
-                const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);
-                console.log(`✅ Campaign level ${levelData.id} completed:`, result);
-              } catch (error) {
-                console.error(`❌ Failed to complete campaign level ${levelData.id}:`, error);
-                // Fallback to just ending the game
-                await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
-              }
-            })();
+            try {
+              const { default: campaignManager } = await import('../utils/campaignManager');
+              const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);
+              console.log(`✅ Campaign level ${levelData.id} completed:`, result);
+            } catch (error) {
+              console.error(`❌ Failed to complete campaign level ${levelData.id}:`, error);
+              // Fallback to just ending the game
+              await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
+            }
           } else {
             // For non-campaign games, just end the game
             console.log(`🎯 Non-campaign game won - ending game only`);
-            (async () => {
-              await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
-            })();
+            await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
           }
+        })();
         } else if (!isPlayerWin && levelData && gameStartTime) {
           // Player lost - always just record the loss (no campaign completion)
           console.log(`💀 Game lost - ending game only`);
@@ -1010,19 +1033,44 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           
           // Award coins for winning if player won
           if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
-            const coinsEarned = calculateCoinReward();
-            const currentCoins = playerInventory?.coins || 0;
-            
-            // Start coin animation
-            setCoinAnimation({
-              isAnimating: true,
-              startAmount: currentCoins,
-              endAmount: currentCoins + coinsEarned,
-              currentAmount: currentCoins
-            });
-            
-            // Complete level using campaign manager directly
+            // Check if this is a replay (level already completed) for campaign games
+            const calculateFinalCoins = async () => {
+              let coinsEarned = calculateCoinReward();
+              
+              if (levelData.id) {
+                try {
+                  const { default: campaignManager } = await import('../utils/campaignManager');
+                  await campaignManager.loadProgress(); // Ensure progress is loaded
+                  const isAlreadyCompleted = campaignManager.isLevelCompleted(levelData.id);
+                  
+                  if (isAlreadyCompleted) {
+                    console.log(`🔄 Level ${levelData.id} is a replay (missed checkmate) - setting coins to 0`);
+                    coinsEarned = 0;
+                  } else {
+                    console.log(`🆕 Level ${levelData.id} is first completion (missed checkmate) - awarding ${coinsEarned} coins`);
+                  }
+                } catch (error) {
+                  console.error('❌ Failed to check completion status, awarding coins anyway:', error);
+                  // Keep original coinsEarned value as fallback
+                }
+              }
+              
+              return coinsEarned;
+            };
+
             (async () => {
+              const coinsEarned = await calculateFinalCoins();
+              const currentCoins = playerInventory?.coins || 0;
+            
+              // Start coin animation
+              setCoinAnimation({
+                isAnimating: true,
+                startAmount: currentCoins,
+                endAmount: currentCoins + coinsEarned,
+                currentAmount: currentCoins
+              });
+              
+              // Complete level using campaign manager directly
               try {
                 const { default: campaignManager } = await import('../utils/campaignManager');
                 const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);

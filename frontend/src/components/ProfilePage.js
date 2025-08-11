@@ -7,7 +7,7 @@ import {
 import apiService from '../services/apiService';
 import MovePreview from './MovePreview';
 
-const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyProfile }) => {
+const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile }) => {
   // Removed edit name feature
   const [activeTab, setActiveTab] = useState('overview');
   const [profileData, setProfileData] = useState(null);
@@ -67,24 +67,14 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
   const stats = profileData?.playerData || userStats || {};
   const gameStats = profileData?.gameStats || {};
   
-  const currentStats = {
-    gamesPlayed: gameStats.gamesPlayed || stats.gamesPlayed || 0,
-    gamesWon: gameStats.gamesWon || stats.gamesWon || 0,
-    gamesLost: gameStats.gamesLost || stats.gamesLost || 0,
-    gamesDrawn: gameStats.gamesDrawn || stats.gamesDrawn || 0,
-    winRate: gameStats.winRate || (stats.gamesPlayed ? Math.round(100 * (stats.gamesWon || 0) / stats.gamesPlayed) : 0),
-    totalPlayTime: gameStats.totalPlayTime || stats.totalPlayTime || 'N/A',
-    favoriteOpening: gameStats.favoriteOpening || stats.favoriteOpening || 'N/A',
-    longestWinStreak: gameStats.longestWinStreak || stats.longestWinStreak || 0,
-    currentWinStreak: gameStats.currentWinStreak || stats.currentWinStreak || 0,
-    totalCoinsEarned: gameStats.totalCoinsEarned || stats.totalCoinsEarned || 0,
-    levelsCompleted: gameStats.levelsCompleted || stats.levelsCompleted || 0,
-    averageGameLength: gameStats.averageGameLength || stats.averageGameLength || 'N/A',
-  };
-
-  // Derived analytics on games
+  // Derived analytics on games (excluding campaign games)
   const gameAnalytics = useMemo(() => {
     if (!gameHistory || gameHistory.length === 0) return null;
+    
+    // Filter out campaign games for match history
+    const matchHistory = gameHistory.filter(game => game.gameType !== 'campaign');
+    if (matchHistory.length === 0) return null;
+    
     const byResult = { win: 0, loss: 0, draw: 0, 'in-progress': 0 };
     const byType = { 'vs-ai': 0, campaign: 0, 'vs-player': 0 };
     const byEndReason = {}; // dynamic
@@ -93,7 +83,7 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
     let longestGame = null;
     let totalMoves = 0;
     let totalDuration = 0;
-    gameHistory.forEach(g => {
+    matchHistory.forEach(g => {
       if (g.result && byResult[g.result] !== undefined) byResult[g.result]++;
       if (g.gameType && byType[g.gameType] !== undefined) byType[g.gameType]++;
       if (g.endReason) byEndReason[g.endReason] = (byEndReason[g.endReason] || 0) + 1;
@@ -110,10 +100,44 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
         if (!longestGame || g.duration > longestGame.duration) longestGame = g;
       }
     });
-    const avgMoves = totalMoves > 0 ? Math.round(totalMoves / gameHistory.length) : 0;
-    const avgDurationMs = totalDuration > 0 ? totalDuration / gameHistory.length : 0;
-    return { byResult, byType, byEndReason, difficultyWins, fastestWin, longestGame, avgMoves, avgDurationMs };
+    const avgMoves = totalMoves > 0 ? Math.round(totalMoves / matchHistory.length) : 0;
+    const avgDurationMs = totalDuration > 0 ? totalDuration / matchHistory.length : 0;
+    return { byResult, byType, byEndReason, difficultyWins, fastestWin, longestGame, avgMoves, avgDurationMs, matchHistory };
   }, [gameHistory]);
+
+  // Calculate match-only stats (excluding campaign games)  
+  const matchOnlyStats = useMemo(() => {
+    if (!gameAnalytics || !gameAnalytics.matchHistory) return null;
+    const matches = gameAnalytics.matchHistory;
+    const totalMatches = matches.length;
+    const wins = gameAnalytics.byResult.win || 0;
+    const losses = gameAnalytics.byResult.loss || 0;
+    const draws = gameAnalytics.byResult.draw || 0;
+    const winRate = totalMatches > 0 ? Math.round(100 * wins / totalMatches) : 0;
+    
+    return {
+      gamesPlayed: totalMatches,
+      gamesWon: wins,
+      gamesLost: losses,
+      gamesDrawn: draws,
+      winRate: winRate
+    };
+  }, [gameAnalytics]);
+  
+  const currentStats = {
+    gamesPlayed: matchOnlyStats?.gamesPlayed || gameStats.gamesPlayed || stats.gamesPlayed || 0,
+    gamesWon: matchOnlyStats?.gamesWon || gameStats.gamesWon || stats.gamesWon || 0,
+    gamesLost: matchOnlyStats?.gamesLost || gameStats.gamesLost || stats.gamesLost || 0,
+    gamesDrawn: matchOnlyStats?.gamesDrawn || gameStats.gamesDrawn || stats.gamesDrawn || 0,
+    winRate: matchOnlyStats?.winRate || gameStats.winRate || (stats.gamesPlayed ? Math.round(100 * (stats.gamesWon || 0) / stats.gamesPlayed) : 0),
+    totalPlayTime: gameStats.totalPlayTime || stats.totalPlayTime || 'N/A',
+    favoriteOpening: gameStats.favoriteOpening || stats.favoriteOpening || 'N/A',
+    longestWinStreak: gameStats.longestWinStreak || stats.longestWinStreak || 0,
+    currentWinStreak: gameStats.currentWinStreak || stats.currentWinStreak || 0,
+    totalCoinsEarned: gameStats.totalCoinsEarned || stats.totalCoinsEarned || 0,
+    levelsCompleted: gameStats.levelsCompleted || stats.levelsCompleted || 0,
+    averageGameLength: gameStats.averageGameLength || stats.averageGameLength || 'N/A',
+  };
 
   const formatPlayTimeMs = (ms) => {
     if (!ms || ms <= 0) return 'N/A';
@@ -279,21 +303,24 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
     </div>
   );
 
-  const renderGameHistory = () => (
-    <div className="space-y-6">
-      <div className="bg-black/60 backdrop-blur-md rounded-xl p-6 border border-white/30">
-        <h3 className="text-xl font-bold text-white mb-4 flex items-center">
-          <IoList className="mr-2 text-blue-400" />
-          Game History ({gameHistory.length}{historyLoading ? '...' : ''})
-        </h3>
-        
-        {gameHistory.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-white/70">No games played yet.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {gameHistory.map((game, index) => (
+  const renderGameHistory = () => {
+    const matchHistory = gameAnalytics?.matchHistory || [];
+    
+    return (
+      <div className="space-y-6">
+        <div className="bg-black/60 backdrop-blur-md rounded-xl p-6 border border-white/30">
+          <h3 className="text-xl font-bold text-white mb-4 flex items-center">
+            <IoList className="mr-2 text-blue-400" />
+            Match History ({matchHistory.length}{historyLoading ? '...' : ''})
+          </h3>
+          
+          {matchHistory.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-white/70">No matches played yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+            {matchHistory.map((game, index) => (
               <div key={game.gameId || index} className={`p-4 rounded-lg border transition-all ${
                 game.result === 'win' 
                   ? 'bg-green-900/20 border-green-400/30' 
@@ -472,6 +499,7 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
       </div>
     </div>
   );
+  };
 
   const renderInventory = () => {
     let ownedRaw = stats.ownedItems || profileData?.playerData?.ownedItems || {};

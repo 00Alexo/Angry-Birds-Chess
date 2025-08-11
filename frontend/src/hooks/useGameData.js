@@ -199,14 +199,15 @@ export const usePlayerInventory = () => {
     if (!isAuthenticated) return false;
     
     try {
-      const result = await serverGameDB.resetEverything();
-      setPlayerInventory(result);
+      const result = await apiService.resetProgress();
+      // Reload player data after reset
+      await loadPlayerData();
       return true;
     } catch (error) {
       console.error('Failed to reset progress:', error);
       return false;
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, loadPlayerData]);
 
   return {
     playerInventory,

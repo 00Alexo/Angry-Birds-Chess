@@ -1497,7 +1497,12 @@ const CampaignPage = ({
                   <div className="space-y-2">
                     <div className="flex justify-between">
                       <span className="text-slate-300">Reward:</span>
-                      <span className="text-amber-400 font-bold">{previewLevel.coinReward} 🪙</span>
+                      <span className="text-amber-400 font-bold">
+                        {isLevelCompleted && isLevelCompleted(previewLevel.id) ? '0' : previewLevel.coinReward} 🪙
+                        {isLevelCompleted && isLevelCompleted(previewLevel.id) && (
+                          <span className="text-slate-400 text-xs ml-1">(Replay)</span>
+                        )}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-300">Energy Cost:</span>
@@ -1798,7 +1803,12 @@ const CampaignPage = ({
                 </div>
                 <div className="flex justify-between text-slate-300">
                   <span>Coins Earned:</span>
-                  <span className="text-green-400 font-bold">{previewLevel.coinReward} 🪙</span>
+                  <span className="text-green-400 font-bold">
+                    {isLevelCompleted && isLevelCompleted(previewLevel.id) ? '0' : previewLevel.coinReward} 🪙
+                    {isLevelCompleted && isLevelCompleted(previewLevel.id) && (
+                      <span className="text-slate-400 text-xs ml-1">(Replay)</span>
+                    )}
+                  </span>
                 </div>
                 <div className="flex justify-between text-slate-300">
                   <span>Remaining Tokens:</span>
