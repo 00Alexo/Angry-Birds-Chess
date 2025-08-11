@@ -81,34 +81,34 @@ function classifyMove({ side, evalBefore, evalAfter, bestEval, chosenEval, piece
   let classification = 'Good';
 
   // Determine advantage delta relative to best.
-  if (diff < 0.02) classification = 'Best';        // Very strict for "Best"
-  else if (diff < 0.15) classification = 'Excellent'; 
-  else if (diff < 0.35) classification = 'Great';      
-  else if (diff < 0.60) classification = 'Good';      
-  else if (diff < 1.20) classification = 'Inaccuracy'; 
-  else if (diff < 2.50) classification = 'Mistake';   
+  if (diff < 0.01) classification = 'Best';        // Ultra strict for "Best" - nearly perfect
+  else if (diff < 0.10) classification = 'Excellent'; 
+  else if (diff < 0.25) classification = 'Great';      
+  else if (diff < 0.50) classification = 'Good';      
+  else if (diff < 1.00) classification = 'Inaccuracy'; 
+  else if (diff < 2.00) classification = 'Mistake';   
   else classification = 'Blunder';
 
   // Special cases - CHECKMATE ALWAYS OVERRIDES OTHER CLASSIFICATIONS
   // From the mover's perspective:
-  const moverImproved = side === 'birds' ? (evalAfter > evalBefore + 1.0) : (evalAfter < evalBefore - 1.0);
-  const massiveImprovement = side === 'birds' ? (evalAfter > evalBefore + 2.0) : (evalAfter < evalBefore - 2.0);
+  const moverImproved = side === 'birds' ? (evalAfter > evalBefore + 1.5) : (evalAfter < evalBefore - 1.5);
+  const massiveImprovement = side === 'birds' ? (evalAfter > evalBefore + 3.0) : (evalAfter < evalBefore - 3.0);
 
   // CHECKMATE DETECTION FIRST - overrides any other classification
   if (isCheckmate) {
-    if (sacrifice && massiveImprovement) {
-      classification = 'Brilliant'; // Sacrificial checkmate
-    } else if (capturedPieceValue >= 5) {
-      classification = 'Brilliant'; // Checkmate capturing major piece
-    } else if (sacrifice) {
-      classification = 'Excellent'; // Any sacrificial checkmate is at least Excellent
+    if (sacrifice && massiveImprovement && capturedPieceValue >= 9) {
+      classification = 'Brilliant'; // Only queen sacrifice checkmate = Brilliant
+    } else if (sacrifice && massiveImprovement && capturedPieceValue >= 5) {
+      classification = 'Excellent'; // Major piece sacrifice checkmate = Excellent
+    } else if (capturedPieceValue >= 9) {
+      classification = 'Excellent'; // Queen capture checkmate = Excellent
     } else {
       classification = 'Best'; // Regular checkmate is always Best minimum
     }
   }
-  // Only check other brilliant criteria if not already checkmate
-  else if (classification === 'Best' && sacrifice && massiveImprovement && capturedPieceValue >= 9) {
-    // Perfect sacrifice of queen for massive advantage = Brilliant  
+  // Only check other brilliant criteria if not already checkmate - EXTREMELY RARE
+  else if (classification === 'Best' && sacrifice && massiveImprovement && capturedPieceValue >= 9 && diff < 0.01) {
+    // Perfect sacrifice of queen for massive advantage with near-perfect play = Brilliant  
     classification = 'Brilliant';
   }
 

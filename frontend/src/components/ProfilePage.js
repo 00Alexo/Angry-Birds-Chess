@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   IoArrowBack, IoPerson, IoStatsChart, IoCash, IoTime, IoFlame, IoGameController, IoList, 
-  IoCube, IoConstruct, IoLayers, IoAnalytics, IoAlbums
+  IoCube, IoConstruct, IoLayers, IoAnalytics, IoAlbums, IoEye
 } from 'react-icons/io5';
 import apiService from '../services/apiService';
+import MovePreview from './MovePreview';
 
 const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyProfile }) => {
   // Removed edit name feature
@@ -14,6 +15,9 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
   const [historyLimit, setHistoryLimit] = useState(50);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedGame, setExpandedGame] = useState(null); // For showing detailed moves
+  const [showMovePreview, setShowMovePreview] = useState(false);
+  const [previewMoves, setPreviewMoves] = useState([]);
+  const [previewGameId, setPreviewGameId] = useState(null);
   const { user } = useAuth();
   const isOwnProfile = user && (user.username === userName);
   const [loading, setLoading] = useState(true);
@@ -385,12 +389,25 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
                               );
                             })}
                           </div>
-                          <button
-                            onClick={() => setExpandedGame(expandedGame === game.gameId ? null : game.gameId)}
-                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                          >
-                            {expandedGame === game.gameId ? 'Hide Player Moves ▲' : 'Show Player Moves ▼'} ({moveStats.totalPlayerMoves})
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setExpandedGame(expandedGame === game.gameId ? null : game.gameId)}
+                              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                            >
+                              {expandedGame === game.gameId ? 'Hide Player Moves ▲' : 'Show Player Moves ▼'} ({moveStats.totalPlayerMoves})
+                            </button>
+                            <button
+                              onClick={() => {
+                                setPreviewMoves(game.moves); // Pass all moves for accurate board state
+                                setPreviewGameId(game.gameId);
+                                setShowMovePreview(true);
+                              }}
+                              className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded flex items-center gap-1 transition-colors"
+                            >
+                              <IoEye className="text-xs" />
+                              Preview Moves
+                            </button>
+                          </div>
                         </div>
                       );
                     })()}
@@ -749,6 +766,19 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, onShowAnyPr
   {isOwnProfile && activeTab === 'playerData' && renderPlayerData()}
   {isOwnProfile && activeTab === 'analytics' && renderAnalytics()}
       </div>
+
+      {/* Move Preview Modal */}
+      {showMovePreview && previewMoves.length > 0 && (
+        <MovePreview
+          moves={previewMoves}
+          gameId={previewGameId}
+          onClose={() => {
+            setShowMovePreview(false);
+            setPreviewMoves([]);
+            setPreviewGameId(null);
+          }}
+        />
+      )}
     </div>
   );
 };
