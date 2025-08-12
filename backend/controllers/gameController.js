@@ -424,6 +424,45 @@ const completeLevelWithStars = async (req, res) => {
       
       req.user.markModified('gameHistory');
       console.log(`✅ Game ${activeGame.gameId} ended as win with level completion`);
+    } else {
+      // No active game found - create a new game history entry for this campaign level completion
+      console.log(`🎮 No active game found for level ${sanitizedLevelId} - creating new game history entry`);
+      
+      const gameId = `campaign_${req.user._id}_${sanitizedLevelId}_${Date.now()}`;
+      const newGameEntry = {
+        gameId,
+        gameType: 'campaign',
+        opponent: `Level ${sanitizedLevelId}`,
+        result: 'win',
+        duration: sanitizedBestTime || null,
+        movesPlayed: 0,
+        coinsEarned: sanitizedCoinsEarned,
+        energySpent: 1,
+        levelId: sanitizedLevelId,
+        stars: sanitizedStars,
+        playerColor: 'white',
+        endReason: 'level-completed',
+        createdAt: new Date()
+      };
+      
+      req.user.gameHistory.push(newGameEntry);
+  // Since there was no 'startGame' call, ensure gamesPlayed is incremented as this is a full game completion
+  req.user.playerData.gamesPlayed = (req.user.playerData.gamesPlayed || 0) + 1;
+      // Update game statistics
+      req.user.playerData.gamesWon++;
+      req.user.playerData.currentWinStreak++;
+      req.user.playerData.longestWinStreak = Math.max(
+        req.user.playerData.longestWinStreak, 
+        req.user.playerData.currentWinStreak
+      );
+      
+      // Add duration to total play time
+      if (sanitizedBestTime) {
+        req.user.playerData.totalPlayTime += sanitizedBestTime;
+      }
+      
+      req.user.markModified('gameHistory');
+      console.log(`✅ Created new game history entry ${gameId} for campaign level completion`);
     }
 
     console.log(`📊 Current campaign progress length: ${req.user.campaignProgress.length}`);

@@ -123,6 +123,28 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
       winRate: winRate
     };
   }, [gameAnalytics]);
+
+  // Calculate campaign-only stats
+  const campaignStats = useMemo(() => {
+    if (!gameHistory || gameHistory.length === 0) return null;
+    
+    const campaignGames = gameHistory.filter(game => game.gameType === 'campaign');
+    if (campaignGames.length === 0) return null;
+    
+    const totalCampaignGames = campaignGames.length;
+    const campaignWins = campaignGames.filter(game => game.result === 'win').length;
+    const campaignLosses = campaignGames.filter(game => game.result === 'loss').length;
+    const campaignDraws = campaignGames.filter(game => game.result === 'draw').length;
+    const campaignWinRate = totalCampaignGames > 0 ? Math.round(100 * campaignWins / totalCampaignGames) : 0;
+    
+    return {
+      gamesPlayed: totalCampaignGames,
+      gamesWon: campaignWins,
+      gamesLost: campaignLosses,
+      gamesDrawn: campaignDraws,
+      winRate: campaignWinRate
+    };
+  }, [gameHistory]);
   
   const currentStats = {
     gamesPlayed: matchOnlyStats?.gamesPlayed || gameStats.gamesPlayed || stats.gamesPlayed || 0,
@@ -210,13 +232,25 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
           <IoGameController size={32} className="text-blue-400 mx-auto mb-2" />
-          <div className="text-2xl font-bold text-white">{currentStats.gamesPlayed}</div>
-          <div className="text-sm text-white/90">Games Played</div>
+          <div className="text-2xl font-bold text-white">
+            {currentStats.gamesPlayed}
+            {campaignStats && <span className="text-sm text-white/60 ml-1">({campaignStats.gamesPlayed})</span>}
+          </div>
+          <div className="text-sm text-white/90">
+            Games Played
+            {campaignStats && <div className="text-xs text-white/60">(Campaign in parentheses)</div>}
+          </div>
         </div>
         <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
           <IoStatsChart size={32} className="text-yellow-400 mx-auto mb-2" />
-          <div className="text-2xl font-bold text-white">{currentStats.gamesWon}</div>
-          <div className="text-sm text-white/90">Victories</div>
+          <div className="text-2xl font-bold text-white">
+            {currentStats.gamesWon}
+            {campaignStats && <span className="text-sm text-white/60 ml-1">({campaignStats.gamesWon})</span>}
+          </div>
+          <div className="text-sm text-white/90">
+            Victories
+            {campaignStats && <div className="text-xs text-white/60">(Campaign in parentheses)</div>}
+          </div>
         </div>
         <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
           <IoFlame size={32} className="text-orange-400 mx-auto mb-2" />
@@ -304,23 +338,44 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
   );
 
   const renderGameHistory = () => {
-    const matchHistory = gameAnalytics?.matchHistory || [];
+    // Sort all games by creation date (newest first)
+    const allGames = (gameHistory || []).slice().sort((a, b) => {
+      const dateA = new Date(a.createdAt);
+      const dateB = new Date(b.createdAt);
+      return dateB.getTime() - dateA.getTime();
+    });
     
     return (
       <div className="space-y-6">
         <div className="bg-black/60 backdrop-blur-md rounded-xl p-6 border border-white/30">
           <h3 className="text-xl font-bold text-white mb-4 flex items-center">
             <IoList className="mr-2 text-blue-400" />
-            Match History ({matchHistory.length}{historyLoading ? '...' : ''})
+            Game History ({allGames.length}{historyLoading ? '...' : ''})
           </h3>
           
-          {matchHistory.length === 0 ? (
+          {/* Legend */}
+          <div className="mb-4 flex flex-wrap gap-2 text-xs">
+            <div className="flex items-center gap-1 text-purple-400">
+              <span className="w-2 h-2 bg-purple-400 rounded-full"></span>
+              <span>[Campaign] levels</span>
+            </div>
+            <div className="flex items-center gap-1 text-blue-400">
+              <span className="w-2 h-2 bg-blue-400 rounded-full"></span>
+              <span>vs AI matches</span>
+            </div>
+            <div className="flex items-center gap-1 text-green-400">
+              <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+              <span>vs Player matches</span>
+            </div>
+          </div>
+          
+          {allGames.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-white/70">No matches played yet.</p>
+              <p className="text-white/70">No games played yet.</p>
             </div>
           ) : (
             <div className="space-y-3">
-            {matchHistory.map((game, index) => (
+            {allGames.map((game, index) => (
               <div key={game.gameId || index} className={`p-4 rounded-lg border transition-all ${
                 game.result === 'win' 
                   ? 'bg-green-900/20 border-green-400/30' 
@@ -345,10 +400,21 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
                         {game.result === 'in-progress' ? 'ONGOING' : game.result.toUpperCase()}
                       </span>
                       <span className="text-white/80 text-sm">
-                        {game.gameType === 'vs-ai' ? `vs ${game.opponent || 'AI'}` : 
-                         game.gameType === 'campaign' ? `Campaign Level ${game.levelId}` :
-                         `vs ${game.opponent || 'Player'}`}
+                        {game.gameType === 'campaign' ? (
+                          <>
+                            <span className="text-purple-400">[Campaign]</span> Level {game.levelId}
+                          </>
+                        ) : game.gameType === 'vs-ai' ? (
+                          `vs ${game.opponent || 'AI'}`
+                        ) : (
+                          `vs ${game.opponent || 'Player'}`
+                        )}
                       </span>
+                      {game.gameType === 'campaign' && game.stars && (
+                        <span className="text-yellow-400 text-sm">
+                          {'⭐'.repeat(game.stars)}
+                        </span>
+                      )}
                       {game.endReason === 'abandoned' && (
                         <span className="text-xs text-red-300 bg-red-800/40 px-2 py-0.5 rounded">Abandoned</span>
                       )}

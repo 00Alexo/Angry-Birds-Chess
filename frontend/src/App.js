@@ -9,6 +9,7 @@ import ChessBoardPage from './components/ChessBoardPage';
 import EnergyTestPage from './components/EnergyTestPage';
 import ShopPage from './components/ShopPage';
 import ProfilePage from './components/ProfilePage';
+import MultiplayerPage from './components/MultiplayerPage';
 import { usePlayerInventory, useCampaignProgress } from './hooks/useGameData';
 import socketService from './services/socketService';
 
@@ -120,7 +121,8 @@ function AppContent() {
   };
 
   const handleMultiPlayer = () => {
-    showNotification(`Multiplayer is not available yet as the game is still in its beta phase, but will be available soon with our own ELO system!`, `error`);
+    setCurrentScreen('multiplayer');
+    window.history.pushState(null, null, '/multiplayer');
   };
 
   const handleSelectDifficulty = async (difficulty) => {
@@ -265,6 +267,14 @@ function AppContent() {
             playerInventory={playerInventory}
             purchaseShopItem={purchaseShopItem}
             getDailyDeals={getDailyDeals}
+          />
+        );
+      case 'multiplayer':
+        return (
+          <MultiplayerPage 
+            onBack={handleBackToMenu}
+            userName={user?.username}
+            playerInventory={playerInventory}
           />
         );
       case 'chess':

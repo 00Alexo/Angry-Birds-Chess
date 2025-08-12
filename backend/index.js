@@ -21,11 +21,51 @@ const io = new Server(server, {
   }
 });
 
+// Verbose Socket.IO engine diagnostics for debugging WS issues
+io.engine.on('connection_error', (err) => {
+  try {
+    console.error('❌ [WS][Engine] connection_error', {
+      code: err.code,
+      message: err.message,
+      context: err.context
+    });
+  } catch (_) {
+    console.error('❌ [WS][Engine] connection_error');
+  }
+});
+
+// Observe raw HTTP upgrade attempts (useful if a proxy blocks upgrades)
+server.on('upgrade', (req, socket) => {
+  try {
+    const ua = req.headers['user-agent'];
+    const origin = req.headers['origin'] || req.headers['referer'];
+    console.log(`⬆️  [HTTP] upgrade attempt url=${req.url} origin=${origin || 'n/a'} ua=${ua || 'n/a'}`);
+  } catch (_) {}
+});
+
 // Store active games
 const activeGames = new Map();
+// Track online multiplayer presence by socket id
+const onlinePlayers = new Map();
 
 io.on('connection', (socket) => {
-  console.log('🔌 [WebSocket] New connection:', socket.id);
+  try {
+    const transport = socket.conn.transport.name;
+    const origin = socket.handshake.headers?.origin || socket.handshake.headers?.referer;
+    console.log(`🔌 [WebSocket] New connection id=${socket.id} transport=${transport} origin=${origin || 'n/a'}`);
+  } catch (_) {
+    console.log('🔌 [WebSocket] New connection:', socket.id);
+  }
+
+  // Log transport upgrades
+  try {
+    socket.conn.on('upgrade', (t) => {
+      console.log(`⤴️  [WebSocket] Transport upgraded id=${socket.id} -> ${t?.name || t}`);
+    });
+    socket.conn.on('close', (reason) => {
+      console.log(`🔒 [WebSocket] Conn closed id=${socket.id} reason=${reason}`);
+    });
+  } catch (_) {}
 
   // Test connection
   socket.emit('connected', { message: 'Connected to WebSocket server', socketId: socket.id });
@@ -53,6 +93,43 @@ io.on('connection', (socket) => {
     console.log(`📊 [WebSocket] Active games: ${activeGames.size}`);
     
     socket.emit('game-started', { gameId, success: true });
+  });
+
+  // Multiplayer presence: user joins multiplayer page
+  socket.on('multiplayer:join', (payload = {}) => {
+    try {
+      const username = (payload.username || 'Player').toString();
+      const userId = payload.userId || null;
+      const rating = payload.rating || null;
+      const status = 'online';
+      const player = { socketId: socket.id, username, userId, rating, status, joinedAt: new Date() };
+      onlinePlayers.set(socket.id, player);
+      console.log(`🟢 [Presence] ${username} joined multiplayer (${socket.id})`);
+      io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+    } catch (err) {
+      console.error('❌ [Presence] Failed to handle multiplayer:join', err);
+    }
+  });
+
+  // Multiplayer presence: user status update (online | in-game)
+  socket.on('multiplayer:status', (payload = {}) => {
+    const status = payload.status === 'in-game' ? 'in-game' : 'online';
+    const player = onlinePlayers.get(socket.id);
+    if (player) {
+      player.status = status;
+      onlinePlayers.set(socket.id, player);
+      console.log(`🔄 [Presence] ${player.username} status -> ${status}`);
+      io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+    }
+  });
+
+  // Multiplayer presence: client requests the current list explicitly (avoids race on initial join)
+  socket.on('multiplayer:get-online-players', () => {
+    try {
+      socket.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+    } catch (err) {
+      console.error('❌ [Presence] Failed to send online players to requester:', err);
+    }
   });
 
   // Handle game end
@@ -174,10 +251,14 @@ io.on('connection', (socket) => {
 
   // Track moves (lightweight notification from client)
   socket.on('game-move', (data) => {
-    const { gameId, move } = data || {};
+    const { gameId, move, userId } = data || {};
     if (!gameId) return;
     const gameSession = activeGames.get(gameId);
     if (!gameSession) return;
+    // If client provided userId late, attach it to the session for proper attribution on disconnect
+    if (userId && !gameSession.userId) {
+      gameSession.userId = userId;
+    }
     gameSession.moves = (gameSession.moves || 0) + 1;
     if (move) {
       if (!Array.isArray(gameSession.moveList)) gameSession.moveList = [];
@@ -207,51 +288,88 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('🔌 [WebSocket] Disconnected:', socket.id);
+    // Remove from presence and broadcast
+    if (onlinePlayers.has(socket.id)) {
+      const p = onlinePlayers.get(socket.id);
+      onlinePlayers.delete(socket.id);
+      console.log(`⚫ [Presence] ${p.username} left multiplayer (${socket.id})`);
+      io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+    }
     
     // Clean up any games for this socket
     const abandonPromises = [];
     for (const [gameId, gameData] of activeGames.entries()) {
       if (gameData.socketId === socket.id) {
-        // If at least one move was made count as loss
-        if ((gameData.moves || 0) > 0 && gameData.userId) {
-          console.log(`💀 [WebSocket] Abandoned game detected with moves (${gameData.moves}) - recording loss: ${gameId}`);
+        // For campaign games, record abandoned even with 0 moves; for others require at least 1 move
+        const shouldRecordAbandoned = (((gameData.moves || 0) > 0) || gameData.gameType === 'campaign');
+        if (shouldRecordAbandoned) {
+          console.log(`💀 [WebSocket] Abandoned game detected (moves=${gameData.moves || 0}) - evaluating loss record: ${gameId}`);
           const duration = Date.now() - gameData.startTime.getTime();
-          const lossEntry = {
-            gameId,
-            gameType: gameData.gameType || 'vs-ai',
-            opponent: gameData.opponent || 'AI',
-            result: 'loss',
-            duration,
-            movesPlayed: gameData.moves || 0,
-            moves: (gameData.moveList && gameData.moveList.length ? gameData.moveList : undefined),
-            coinsEarned: 0,
-            energySpent: 1,
-            levelId: gameData.levelId || null,
-            stars: 0,
-            playerColor: 'white',
-            endReason: 'abandoned',
-            createdAt: gameData.startTime
-          };
           abandonPromises.push((async () => {
             try {
-              const user = await User.findById(gameData.userId);
+              // Resolve user either by stored userId or by username fallback
+              let user = null;
+              if (gameData.userId) {
+                user = await User.findById(gameData.userId);
+              }
+              if (!user && gameData.username) {
+                user = await User.findOne({ username: gameData.username });
+              }
               if (user) {
-                user.gameHistory.push(lossEntry);
-                user.playerData.gamesPlayed = (user.playerData.gamesPlayed || 0) + 1;
-                user.playerData.gamesLost = (user.playerData.gamesLost || 0) + 1;
-                user.playerData.currentWinStreak = 0;
-                if (duration) {
-                  user.playerData.totalPlayTime = (user.playerData.totalPlayTime || 0) + duration;
+                // If this is a campaign game and the level was completed during this session,
+                // skip recording an abandoned loss to avoid duplicate entries.
+                let skipAbandoned = false;
+                if ((gameData.gameType === 'campaign') && (gameData.levelId !== undefined && gameData.levelId !== null)) {
+                  const startTs = gameData.startTime ? gameData.startTime.getTime() : 0;
+                  const hasCampaignWin = user.gameHistory.some(e => {
+                    try {
+                      const sameLevel = e.gameType === 'campaign' && String(e.levelId) === String(gameData.levelId);
+                      const completed = e.result && e.result !== 'in-progress' && e.endReason !== 'abandoned';
+                      const createdTs = e.createdAt ? new Date(e.createdAt).getTime() : 0;
+                      // Consider wins created during or shortly after session start (±60s window)
+                      return sameLevel && completed && createdTs >= (startTs - 60000);
+                    } catch (_) { return false; }
+                  });
+                  if (hasCampaignWin) {
+                    skipAbandoned = true;
+                    console.log(`🛑 [WebSocket] Skipping abandoned loss for ${gameId} — campaign level ${gameData.levelId} already completed during session.`);
+                  }
                 }
-                user.markModified('gameHistory');
-                user.markModified('playerData');
-                await user.save();
-                console.log(`📉 [WebSocket] Abandoned loss saved for user ${user.username}, total games: ${user.gameHistory.length}`);
+
+                if (!skipAbandoned) {
+                  const lossEntry = {
+                    gameId,
+                    gameType: gameData.gameType || 'vs-ai',
+                    opponent: gameData.opponent || 'AI',
+                    result: 'loss',
+                    duration,
+                    movesPlayed: gameData.moves || 0,
+                    moves: (gameData.moveList && gameData.moveList.length ? gameData.moveList : undefined),
+                    coinsEarned: 0,
+                    energySpent: 1,
+                    levelId: gameData.levelId || null,
+                    stars: 0,
+                    playerColor: 'white',
+                    endReason: 'abandoned',
+                    createdAt: gameData.startTime
+                  };
+                  user.gameHistory.push(lossEntry);
+                  user.playerData.gamesPlayed = (user.playerData.gamesPlayed || 0) + 1;
+                  user.playerData.gamesLost = (user.playerData.gamesLost || 0) + 1;
+                  user.playerData.currentWinStreak = 0;
+                  if (duration) {
+                    user.playerData.totalPlayTime = (user.playerData.totalPlayTime || 0) + duration;
+                  }
+                  user.markModified('gameHistory');
+                  user.markModified('playerData');
+                  await user.save();
+                  console.log(`📉 [WebSocket] Abandoned loss saved for user ${user.username}, total games: ${user.gameHistory.length}`);
+                }
               } else {
                 console.warn(`⚠️ [WebSocket] Could not find user ${gameData.userId} to record abandoned loss`);
               }
             } catch (err) {
-              console.error(`❌ [WebSocket] Failed to record abandoned loss for game ${gameId}:`, err);
+              console.error(`❌ [WebSocket] Failed to handle abandoned loss for game ${gameId}:`, err);
             }
           })());
         } else {
@@ -285,7 +403,8 @@ app.get('/api/socket/status', (req, res) => {
   res.json({
     activeGames: activeGames.size,
     connectedSockets: io.sockets.sockets.size,
-    status: 'Simple WebSocket service running'
+  status: 'Simple WebSocket service running',
+  onlinePlayers: onlinePlayers.size
   });
 });
 

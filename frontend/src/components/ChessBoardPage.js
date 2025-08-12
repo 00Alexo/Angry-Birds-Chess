@@ -16,7 +16,7 @@ import apiService from '../services/apiService';
 import { analyzeMove } from '../utils/moveAnalyzer';
 
 const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spendEnergy, addCoins, completeLevelWithStars, selectedTheme = 'default' }) => {
-  const { user } = useAuth(); // Get user from AuthContext
+  const { user, isAuthenticated, isLoading } = useAuth(); // Get user and auth state
   // Board theme definitions
   const boardThemes = {
     default: {
@@ -255,6 +255,12 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
 
     const initializeGame = async () => {
       try {
+        // If we expect an authenticated user but it's not loaded yet, wait before starting so userId is available
+        const token = apiService.getToken?.() || localStorage.getItem('authToken');
+        if (token && (isLoading || !user)) {
+          console.log('⏳ [Game] Auth token present but user not loaded yet — delaying WebSocket start');
+          return;
+        }
         // Connect to WebSocket for this game
         await simpleSocketService.connect();
         
@@ -264,7 +270,8 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           opponent: levelData?.difficulty || 'easy',
           levelId: levelData?.id || null,
           // Include userId at start so backend can store it in activeGames map
-          userId: user?.id || user?._id
+          userId: user?.id || user?._id,
+          username: user?.username
         };
 
         const response = await simpleSocketService.startGame(gameData);
@@ -282,14 +289,14 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       }
     };
 
-    initializeGame();
+  initializeGame();
 
     // Cleanup on unmount
     return () => {
       console.log('🧹 [Game] Component unmounting, disconnecting WebSocket');
       simpleSocketService.disconnect();
     };
-  }, [levelData]);
+  }, [levelData, user, isLoading, isAuthenticated]);
 
   // Track if game has been started to prevent duplicates (React StrictMode causes double execution)
   const gameStartedRef = useRef(false);
@@ -744,6 +751,8 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       try {
         simpleSocketService.socket?.emit('game-move', { 
           gameId: currentGameId,
+          userId: user?.id || user?._id,
+          username: user?.username,
           move: {
             from: moveData.fromPosition,
             to: moveData.toPosition,
@@ -1531,7 +1540,15 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
         {/* Header */}
         <div className="flex items-center justify-between mb-2 sm:mb-4 flex-shrink-0">
           <button
-            onClick={onBack}
+            onClick={async () => {
+              try {
+                // If a campaign game is active and still playing, record as abandoned before leaving
+                if (currentGameId && gameStatus === 'playing' && levelData?.id) {
+                  await endGameWithHistory('loss', 'abandoned', 0, 0);
+                }
+              } catch (_) { /* non-fatal */ }
+              onBack && onBack();
+            }}
             className="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm sm:text-base"
           >
             <IoArrowBack />
