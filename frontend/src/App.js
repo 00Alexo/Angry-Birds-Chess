@@ -6,6 +6,7 @@ import MainMenu from './components/MainMenu';
 import CharactersPage from './components/CharactersPage';
 import CampaignPage from './components/CampaignPage';
 import ChessBoardPage from './components/ChessBoardPage';
+import MultiplayerChessBoard from './components/MultiplayerChessBoard';
 import EnergyTestPage from './components/EnergyTestPage';
 import ShopPage from './components/ShopPage';
 import ProfilePage from './components/ProfilePage';
@@ -290,16 +291,33 @@ function AppContent() {
           />
         );
       case 'chess':
-        return (
-          <ChessBoardPage 
-            onBack={() => {
-              if (selectedLevel?.isMultiplayer) {
-                // For multiplayer games, go back to multiplayer page
+        // Use dedicated multiplayer chess board for multiplayer games
+        if (selectedLevel?.isMultiplayer) {
+          return (
+            <MultiplayerChessBoard
+              matchData={selectedLevel}
+              onGameEnd={(result) => {
+                console.log('🏁 Multiplayer game ended:', result);
+                // Handle game end (update stats, etc.)
+                setCurrentScreen('multiplayer');
+                setSelectedLevel(null);
+                setMultiplayerMatchData(null);
+              }}
+              onBack={() => {
                 setCurrentScreen('multiplayer');
                 setSelectedLevel(null);
                 setMultiplayerMatchData(null);
                 window.history.pushState(null, null, '/multiplayer');
-              } else if (selectedDifficulty) {
+              }}
+            />
+          );
+        }
+        
+        // Use regular chess board for single-player games
+        return (
+          <ChessBoardPage 
+            onBack={() => {
+              if (selectedDifficulty) {
                 // For difficulty-based games, go back to main menu
                 handleBackFromDifficulty();
               } else {

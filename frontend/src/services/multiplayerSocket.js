@@ -45,6 +45,10 @@ class MultiplayerSocket {
       this.socket.on('multiplayer:queue-error', (error) => {
         console.error('[MultiplayerSocket] Queue error:', error);
       });
+      
+      this.socket.on('multiplayer:error', (error) => {
+        console.error('[MultiplayerSocket] Multiplayer error:', error);
+      });
 
       this.socket.on('connect', () => {
         console.log('[MultiplayerSocket] Connected! Socket ID:', this.socket.id);
@@ -151,23 +155,48 @@ class MultiplayerSocket {
 
   // Send move to opponent in multiplayer game
   sendMove(moveData) {
-    console.log('[MultiplayerSocket] Sending move to opponent:', moveData);
+    console.log('[MultiplayerSocket] ===== SENDING MOVE TO BACKEND =====');
+    console.log('[MultiplayerSocket] Move data:', JSON.stringify(moveData, null, 2));
+    console.log('[MultiplayerSocket] Socket connected:', this.connected);
+    console.log('[MultiplayerSocket] Socket ID:', this.socket?.id);
+    
     if (!this.socket || !this.connected) {
-      console.log('[MultiplayerSocket] Cannot send move - not connected');
-      return;
+      console.error('[MultiplayerSocket] ❌ Cannot send move - not connected');
+      return false;
     }
-    this.socket.emit('multiplayer:move', moveData);
+    
+    if (!moveData?.matchId || !moveData?.move || !moveData?.player) {
+      console.error('[MultiplayerSocket] ❌ Invalid move data - missing required fields');
+      return false;
+    }
+    
+    try {
+      this.socket.emit('multiplayer:move', moveData);
+      console.log('[MultiplayerSocket] ✅ Move emitted to backend successfully');
+      return true;
+    } catch (error) {
+      console.error('[MultiplayerSocket] ❌ Error emitting move:', error);
+      return false;
+    }
   }
 
   // Listen for opponent moves
   onOpponentMove(cb) {
-    console.log('[MultiplayerSocket] Setting up opponent move listener');
+    console.log('[MultiplayerSocket] ===== SETTING UP OPPONENT MOVE LISTENER =====');
+    console.log('[MultiplayerSocket] Socket exists:', !!this.socket);
+    console.log('[MultiplayerSocket] Socket connected:', this.connected);
+    
     if (!this.socket) return () => {};
+    
     const handler = (moveData) => {
-      console.log('[MultiplayerSocket] Received opponent move:', moveData);
+      console.log('[MultiplayerSocket] 🎯 ===== OPPONENT MOVE RECEIVED FROM BACKEND =====');
+      console.log('[MultiplayerSocket] Raw move data from backend:', JSON.stringify(moveData, null, 2));
       cb(moveData);
     };
+    
     this.socket.on('multiplayer:opponent-move', handler);
+    console.log('[MultiplayerSocket] ✅ Opponent move listener registered');
+    
     return () => {
       console.log('[MultiplayerSocket] Removing opponent move listener');
       this.socket.off('multiplayer:opponent-move', handler);

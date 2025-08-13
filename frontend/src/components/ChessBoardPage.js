@@ -12,7 +12,6 @@ import { NightmareAI } from './ai/NightmareAI.js';
 import { ImpossibleAI } from './ai/ImpossibleAI.js';
 import socketService from '../services/socketService';
 import simpleSocketService from '../services/simpleSocketService';
-import multiplayerSocket from '../services/multiplayerSocket';
 import apiService from '../services/apiService';
 import { analyzeMove } from '../utils/moveAnalyzer';
 
@@ -71,6 +70,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
 
   // Initial chess board setup
   const [board, setBoard] = useState([]);
+  const [boardUpdateTimestamp, setBoardUpdateTimestamp] = useState(Date.now());
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [possibleMoves, setPossibleMoves] = useState([]);
   const [currentPlayer, setCurrentPlayer] = useState('birds'); // 'birds' or 'pigs' - will be updated based on player color
@@ -96,7 +96,6 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   const [premoveHighlight, setPremoveHighlight] = useState(null); // Highlight premove squares
   const [gameStartTime, setGameStartTime] = useState(null); // Track when game started
   const [currentGameId, setCurrentGameId] = useState(null); // Track current game session
-  const [multiplayerCleanup, setMultiplayerCleanup] = useState(null); // Store multiplayer cleanup function
   const moveHistoryRef = useRef(null);
 
   // Refs to store current values for cleanup
@@ -119,52 +118,17 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     };
   }, [currentGameId, gameStatus, gameStartTime, moveHistory, levelData]);
 
-  // Set up multiplayer event listeners
-  const setupMultiplayerListeners = () => {
-    console.log('[Multiplayer] Setting up event listeners');
-    
-    // Listen for opponent moves
-    const unsubscribeOpponentMove = multiplayerSocket.onOpponentMove((moveData) => {
-      console.log('[Multiplayer] Received opponent move:', moveData);
-      applyOpponentMove(moveData);
-    });
-    
-    // Listen for game end events
-    const unsubscribeGameEnd = multiplayerSocket.onGameEnd((result, reason = '') => {
-      console.log('[Multiplayer] Game ended:', { result, reason });
-      handleGameEnd(result, reason);
-    });
-    
-    console.log('[Multiplayer] Event listeners setup complete');
-    
-    // Return cleanup function
-    return () => {
-      unsubscribeOpponentMove();
-      unsubscribeGameEnd();
-    };
-  };
-
-  // Helper functions to detect game type
-  const isMultiplayerGame = () => {
-    return levelData?.isMultiplayer === true;
-  };
-
   const getGameType = () => {
-    if (levelData?.isMultiplayer) return 'multiplayer';
     if (levelData?.id) return 'campaign';
     return 'vs-ai';
   };
 
+  // Single-player only - no multiplayer support
+  const isMultiplayerGame = () => {
+    return false;
+  };
+
   const getOpponentInfo = () => {
-    if (levelData?.isMultiplayer) {
-      return {
-        name: levelData.opponent?.username || 'Opponent',
-        type: 'player',
-        gameMode: levelData.gameMode || 'competitive',
-        playerColor: levelData.playerColor || 'white', // My color
-        matchId: levelData.matchId
-      };
-    }
     return {
       name: levelData?.difficulty || 'AI',
       type: 'ai',
@@ -176,7 +140,8 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   // Perspective helpers - for multiplayer, both players see their pieces as birds
   const getMyTeam = () => {
     if (isMultiplayerGame()) {
-      // In multiplayer, I'm always birds from my perspective
+      // In multiplayer, I always see myself as 'birds' from my perspective
+      // This is VISUAL ONLY - game logic uses actual white/black assignments
       return 'birds';
     }
     return 'birds'; // Single player is always birds
@@ -185,6 +150,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   const getOpponentTeam = () => {
     if (isMultiplayerGame()) {
       // In multiplayer, opponent is always pigs from my perspective
+      // This is VISUAL ONLY - game logic uses actual team assignments
       return 'pigs';
     }
     return 'pigs'; // Single player opponent is always pigs
@@ -385,48 +351,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           return;
         }
 
-        // For multiplayer games, connect to the multiplayer socket instead
-        if (isMultiplayerGame()) {
-          console.log('🎮 [Multiplayer] Setting up multiplayer game connection');
-          
-          // Connect to multiplayer socket if not already connected
-          if (!multiplayerSocket.connected) {
-            await multiplayerSocket.connect({ 
-              username: user?.username,
-              userId: user?.id || user?._id,
-              rating: user?.playerData?.rating || 1500
-            });
-          }
-          
-          // Set status to in-game
-          multiplayerSocket.setStatus('in-game');
-          
-          // Set up multiplayer event listeners
-          const cleanup = setupMultiplayerListeners();
-          setMultiplayerCleanup(() => cleanup);
-          
-          // Use match data as game ID
-          const gameId = levelData.matchId || `mp_${Date.now()}`;
-          setCurrentGameId(gameId);
-          setIsGameStarted(true);
-          
-          // Set initial turn based on player color
-          const myColor = getOpponentInfo().playerColor;
-          setCurrentPlayer(myColor === 'white' ? 'birds' : 'pigs');
-          
-          console.log(`✅ [Multiplayer] Game initialized: ${gameId}, I play as ${myColor}`);
-          
-          // Debug log the perspective
-          console.log(`🎮 [Multiplayer Debug] Player color: ${myColor}`);
-          console.log(`🎮 [Multiplayer Debug] My team: ${getMyTeam()}`);
-          console.log(`🎮 [Multiplayer Debug] Opponent team: ${getOpponentTeam()}`);
-          console.log(`🎮 [Multiplayer Debug] Black perspective: ${isBlackPerspective()}`);
-          
-          return;
-        }
-
-        // Single player game logic (unchanged)
-        // Connect to WebSocket for this game
+        // Single player game logic - Connect to WebSocket for this game
         await simpleSocketService.connect();
         
         // Get game and opponent info
@@ -463,15 +388,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     // Cleanup on unmount
     return () => {
       console.log('🧹 [Game] Component unmounting, disconnecting WebSocket');
-      if (isMultiplayerGame()) {
-        multiplayerSocket.setStatus('online');
-        // Clean up multiplayer listeners
-        if (multiplayerCleanup) {
-          multiplayerCleanup();
-        }
-      } else {
-        simpleSocketService.disconnect();
-      }
+      simpleSocketService.disconnect();
     };
   }, [levelData, user, isLoading, isAuthenticated]);
 
@@ -486,13 +403,11 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   useEffect(() => {
     if (isMultiplayerGame()) {
       // In multiplayer, set initial turn based on who has white pieces
+      // White always starts first in chess
+      setCurrentPlayer('birds'); // 'birds' represents white pieces, 'pigs' represents black pieces
+      
       const myColor = getOpponentInfo().playerColor;
-      if (myColor === 'white') {
-        setCurrentPlayer('birds'); // White starts, I play as birds
-      } else {
-        setCurrentPlayer('pigs'); // White starts, opponent plays as birds (but I see them as pigs)
-      }
-      console.log(`🎮 [Multiplayer] Initial turn: ${myColor === 'white' ? 'My turn (birds)' : 'Opponent turn (pigs)'}`);
+      console.log(`🎮 [Multiplayer] Game start - White (birds) moves first. I am: ${myColor}`);
     } else {
       // In single-player, always start with birds (player)
       setCurrentPlayer('birds');
@@ -971,6 +886,9 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     const piece = board[fromRow][fromCol];
     console.log(`🎯 Executing move: ${piece?.type} from ${fromRow},${fromCol} to ${toRow},${toCol}`, { specialMove, piece });
     
+    // Determine next player early (needed for various checks throughout the function)
+    const nextPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
+    
     const newBoard = board.map(r => [...r]);
     const capturedPiece = newBoard[toRow][toCol];
     let moveData = {
@@ -1099,52 +1017,28 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     
     setMoveHistory(prev => [...prev, moveData]);
     
-    // Send move to backend for tracking (single-player or general tracking)
+    // Send move to backend for tracking
     if (currentGameId) {
       try {
-        if (isMultiplayerGame()) {
-          // Send move to opponent via multiplayer socket
-          const moveDataForOpponent = {
-            matchId: getOpponentInfo().matchId,
-            move: {
-              from: [fromRow, fromCol],
-              to: [toRow, toCol],
-              piece: moveData.piece,
-              team: moveData.team,
-              captured: moveData.captured,
-              special: specialMove,
-              promotionType: promotionType
-            },
-            player: {
-              username: user?.username,
-              userId: user?.id || user?._id
-            }
-          };
-          
-          // Send via multiplayer socket
-          console.log('📤 [Multiplayer] Sending move to opponent:', moveDataForOpponent);
-          multiplayerSocket.sendMove(moveDataForOpponent);
-        } else {
-          // Single player tracking
-          simpleSocketService.socket?.emit('game-move', { 
-            gameId: currentGameId,
-            userId: user?.id || user?._id,
-            username: user?.username,
-            move: {
-              from: moveData.fromPosition,
-              to: moveData.toPosition,
-              piece: moveData.piece,
-              team: moveData.team,
-              actor: moveData.actor,
-              captured: moveData.captured,
-              special: moveData.special || null,
-              isCheck: !!moveData.isCheck,
-              classification: moveData.analysis?.classification,
-              evalBefore: moveData.analysis?.evalBefore,
-              evalAfter: moveData.analysis?.evalAfter
-            }
-          });
-        }
+        // Single player tracking
+        simpleSocketService.socket?.emit('game-move', { 
+          gameId: currentGameId,
+          userId: user?.id || user?._id,
+          username: user?.username,
+          move: {
+            from: moveData.fromPosition,
+            to: moveData.toPosition,
+            piece: moveData.piece,
+            team: moveData.team,
+            actor: moveData.actor,
+            captured: moveData.captured,
+            special: moveData.special || null,
+            isCheck: !!moveData.isCheck,
+            classification: moveData.analysis?.classification,
+            evalBefore: moveData.analysis?.evalBefore,
+            evalAfter: moveData.analysis?.evalAfter
+          }
+        });
       } catch (e) {
         // non-fatal
       }
@@ -1152,9 +1046,6 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     
     // Save position for repetition detection  
     savePositionToHistory(newBoard, currentPlayer === 'birds' ? 'pigs' : 'birds');
-    
-    // Check for checkmate after the move - determine next player
-    const nextPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
     
     // Run comprehensive game end checks
     checkGameEndConditions(newBoard, nextPlayer);
@@ -1173,8 +1064,9 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       });
     }
     
-    // Switch players and reset timer
+    // Switch players and reset timer for single-player
     setCurrentPlayer(nextPlayer);
+    
     const difficulty = levelData?.difficulty?.toLowerCase();
     if (difficulty === 'hard') {
       setTimeRemaining(45);
@@ -1250,6 +1142,8 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       const myColor = getOpponentInfo().playerColor;
       const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
                        (myColor === 'black' && currentPlayer === 'pigs');
+      
+      console.log(`🎮 [Drag Check] Player: ${myColor}, Current Turn: ${currentPlayer}, My Turn: ${isMyTurn}, Piece: ${piece?.type} (${piece?.team})`);
       
       if (isMyTurn && piece) {
         if (myColor === 'white') {
@@ -1405,95 +1299,6 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     }, 500);
     
     console.log(`[ChessBoardPage] Game ended: ${result} - ${reason}`);
-  };
-
-  // Function to apply opponent move in multiplayer
-  const applyOpponentMove = (moveData) => {
-    console.log('[ChessBoardPage] Applying opponent move:', moveData);
-    
-    if (!aiInstance) {
-      console.error('[ChessBoardPage] No AI instance to validate opponent move');
-      return;
-    }
-
-    // Extract move information
-    const { from, to, piece, specialMove } = moveData.move;
-    const fromRow = from[0], fromCol = from[1];
-    const toRow = to[0], toCol = to[1];
-
-    // Create a new board with the opponent's move
-    const newBoard = board.map(row => [...row]);
-    
-    // Apply the move (similar to how we handle our own moves)
-    const movingPiece = newBoard[fromRow][fromCol];
-    if (!movingPiece) {
-      console.error('[ChessBoardPage] No piece at opponent move origin:', from);
-      return;
-    }
-
-    // Handle special moves
-    if (specialMove === 'castle') {
-      // Handle castling
-      const isKingSide = toCol > fromCol;
-      const rookFromCol = isKingSide ? 7 : 0;
-      const rookToCol = isKingSide ? 5 : 3;
-      
-      // Move rook
-      newBoard[fromRow][rookToCol] = { ...newBoard[fromRow][rookFromCol], moved: true };
-      newBoard[fromRow][rookFromCol] = null;
-    } else if (specialMove === 'enPassant') {
-      // Handle en passant - remove captured pawn
-      const captureRow = movingPiece.team === 'pigs' ? toRow + 1 : toRow - 1; // pigs are opponent
-      newBoard[captureRow][toCol] = null;
-    }
-
-    // Make the main move
-    newBoard[toRow][toCol] = { ...movingPiece, moved: true };
-    newBoard[fromRow][fromCol] = null;
-
-    // Handle promotion if specified
-    if (specialMove === 'promotion' && moveData.move.promotionType) {
-      const size = movingPiece.piece.props.size;
-      newBoard[toRow][toCol] = {
-        type: moveData.move.promotionType,
-        team: movingPiece.team,
-        piece: getPromotedPiece(moveData.move.promotionType, movingPiece.team, size),
-        moved: true
-      };
-    }
-
-    // Update game state
-    setBoard(newBoard);
-    setSelectedSquare(null);
-    setPossibleMoves([]);
-    
-    // Switch turns - opponent just moved, now it's our turn
-    // In multiplayer, both players use team perspective (birds vs pigs)
-    // If opponent was pigs, now it's birds turn (me), and vice versa
-    const opponentTeam = movingPiece.team; // The team that just moved
-    const myTurn = opponentTeam === 'birds' ? 'pigs' : 'birds'; // Switch to the other team
-    console.log(`[ChessBoardPage] Opponent (${opponentTeam}) moved, switching to my turn (${myTurn})`);
-    setCurrentPlayer(myTurn);
-    
-    // Update move history with proper format
-    const moveRecord = {
-      from: [fromRow, fromCol],
-      to: [toRow, toCol],
-      piece: piece,
-      team: movingPiece.team,
-      actor: movingPiece.team === 'birds' ? 'player' : 'enemy',
-      captured: moveData.move.captured || null,
-      fromPosition: getPositionName(fromRow, fromCol),
-      toPosition: getPositionName(toRow, toCol),
-      special: specialMove
-    };
-    setMoveHistory(prev => [...prev, moveRecord]);
-    setLastMove(moveRecord);
-
-    console.log('[ChessBoardPage] Opponent move applied successfully');
-    
-    // Check for winning conditions after opponent's move
-    checkWinCondition(newBoard);
   };
 
   // Function to check win conditions

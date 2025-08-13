@@ -398,39 +398,79 @@ io.on('connection', (socket) => {
   // Multiplayer move handling
   socket.on('multiplayer:move', (moveData) => {
     try {
-      console.log('[Multiplayer] Received move:', moveData);
+      console.log('🎯 [Multiplayer] ===== MOVE RECEIVED FROM CLIENT =====');
+      console.log('[Multiplayer] Move data:', JSON.stringify(moveData, null, 2));
       const { matchId, move, player } = moveData;
+      
+      if (!matchId || !move || !player) {
+        console.error('[Multiplayer] Invalid move data - missing required fields');
+        socket.emit('multiplayer:error', { message: 'Invalid move data' });
+        return;
+      }
       
       // Find the active match
       const match = activeMatches.get(matchId);
       if (!match) {
-        console.warn(`[Multiplayer] Match ${matchId} not found`);
+        console.warn(`[Multiplayer] Match ${matchId} not found in activeMatches`);
+        console.log(`[Multiplayer] Available matches:`, Array.from(activeMatches.keys()));
         socket.emit('multiplayer:error', { message: 'Match not found' });
         return;
       }
       
-      // Determine which player is the opponent
+      console.log(`[Multiplayer] Match found: ${matchId}`);
+      console.log(`[Multiplayer] Player1: ${match.player1.username} (${match.player1.socketId})`);
+      console.log(`[Multiplayer] Player2: ${match.player2.username} (${match.player2.socketId})`);
+      console.log(`[Multiplayer] Current socket: ${socket.id}`);
+      
+      // Determine which player is the opponent and update socket IDs if needed
       let opponentSocketId = null;
+      let playerUpdated = false;
+      
       if (match.player1.socketId === socket.id) {
         opponentSocketId = match.player2.socketId;
+        console.log(`[Multiplayer] Player1 making move, opponent is Player2: ${opponentSocketId}`);
       } else if (match.player2.socketId === socket.id) {
         opponentSocketId = match.player1.socketId;
+        console.log(`[Multiplayer] Player2 making move, opponent is Player1: ${opponentSocketId}`);
       } else {
-        console.warn(`[Multiplayer] Socket ${socket.id} not part of match ${matchId}`);
+        // Socket ID doesn't match - player might have reconnected
+        // Try to match by userId
+        if (match.player1.userId === player.userId) {
+          console.log(`[Multiplayer] Updating player1 socket ID from ${match.player1.socketId} to ${socket.id}`);
+          match.player1.socketId = socket.id;
+          opponentSocketId = match.player2.socketId;
+          playerUpdated = true;
+        } else if (match.player2.userId === player.userId) {
+          console.log(`[Multiplayer] Updating player2 socket ID from ${match.player2.socketId} to ${socket.id}`);
+          match.player2.socketId = socket.id;
+          opponentSocketId = match.player1.socketId;
+          playerUpdated = true;
+        } else {
+          console.warn(`[Multiplayer] Socket ${socket.id} (userId: ${player.userId}) not part of match ${matchId}`);
+          console.warn(`[Multiplayer] Expected userIds: ${match.player1.userId}, ${match.player2.userId}`);
+          return;
+        }
+      }
+      
+      if (!opponentSocketId) {
+        console.error('[Multiplayer] Could not determine opponent socket ID');
         return;
       }
       
-      console.log(`[Multiplayer] Broadcasting move from ${socket.id} to ${opponentSocketId}`);
+      console.log(`🚀 [Multiplayer] Broadcasting move from ${socket.id} to opponent ${opponentSocketId}`);
       
       // Send move to opponent
-      io.to(opponentSocketId).emit('multiplayer:opponent-move', {
+      const moveMessage = {
         matchId,
         move,
         player
-      });
+      };
+      
+      io.to(opponentSocketId).emit('multiplayer:opponent-move', moveMessage);
+      console.log('✅ [Multiplayer] Move broadcast successful');
       
     } catch (err) {
-      console.error('[Multiplayer] Error handling move:', err);
+      console.error('❌ [Multiplayer] Error handling move:', err);
       socket.emit('multiplayer:error', { message: 'Failed to process move' });
     }
   });
