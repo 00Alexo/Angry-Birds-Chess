@@ -5,6 +5,7 @@ export { default as YellowBird } from './YellowBird';
 export { default as BlueBird } from './BlueBird';
 export { default as BlackBird } from './BlackBird';
 export { default as WhiteBird } from './WhiteBird';
+export { default as GreenBird } from './GreenBird';
 
 // Pigs (AI Team)
 export { default as KingPig } from './KingPig';
@@ -22,6 +23,15 @@ export const BIRD_TEAM = {
   bishop: 'WhiteBird',
   knight: 'BlackBird',
   pawn: 'BlueBird'
+};
+
+export const GREEN_BIRD_TEAM = {
+  king: 'GreenBird',
+  queen: 'GreenBird', 
+  rook: 'GreenBird',
+  bishop: 'GreenBird',
+  knight: 'GreenBird',
+  pawn: 'GreenBird'
 };
 
 export const PIG_TEAM = {

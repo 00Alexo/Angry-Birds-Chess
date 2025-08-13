@@ -41,6 +41,11 @@ class MultiplayerSocket {
 
       this.socket = io(socketUrl, opts);
 
+      // Set up event listeners for debugging
+      this.socket.on('multiplayer:queue-error', (error) => {
+        console.error('[MultiplayerSocket] Queue error:', error);
+      });
+
       this.socket.on('connect', () => {
         console.log('[MultiplayerSocket] Connected! Socket ID:', this.socket.id);
         this.connected = true;
@@ -86,6 +91,102 @@ class MultiplayerSocket {
       return;
     }
     this.socket.emit('multiplayer:get-online-players');
+  }
+
+  // Queue management
+  joinQueue(gameMode) {
+    console.log('[MultiplayerSocket] Joining queue:', gameMode);
+    if (!this.socket || !this.connected) {
+      console.log('[MultiplayerSocket] Cannot join queue - not connected');
+      return;
+    }
+    this.socket.emit('multiplayer:join-queue', { gameMode });
+  }
+
+  leaveQueue() {
+    console.log('[MultiplayerSocket] Leaving queue');
+    if (!this.socket || !this.connected) {
+      console.log('[MultiplayerSocket] Cannot leave queue - not connected');
+      return;
+    }
+    this.socket.emit('multiplayer:leave-queue');
+  }
+
+  requestQueueStats() {
+    console.log('[MultiplayerSocket] Requesting queue stats');
+    if (!this.socket || !this.connected) {
+      console.log('[MultiplayerSocket] Cannot request queue stats - not connected');
+      return;
+    }
+    this.socket.emit('multiplayer:get-queue-stats');
+  }
+
+  onQueueStats(cb) {
+    console.log('[MultiplayerSocket] Setting up queue stats listener');
+    if (!this.socket) return () => {};
+    const handler = (stats) => {
+      console.log('[MultiplayerSocket] Received queue stats:', stats);
+      cb(stats || { competitive: 0, unranked: 0 });
+    };
+    this.socket.on('multiplayer:queue-stats', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing queue stats listener');
+      this.socket.off('multiplayer:queue-stats', handler);
+    };
+  }
+
+  onMatchFound(cb) {
+    console.log('[MultiplayerSocket] Setting up match found listener');
+    if (!this.socket) return () => {};
+    const handler = (matchData) => {
+      console.log('[MultiplayerSocket] Match found:', matchData);
+      cb(matchData);
+    };
+    this.socket.on('multiplayer:match-found', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing match found listener');
+      this.socket.off('multiplayer:match-found', handler);
+    };
+  }
+
+  // Send move to opponent in multiplayer game
+  sendMove(moveData) {
+    console.log('[MultiplayerSocket] Sending move to opponent:', moveData);
+    if (!this.socket || !this.connected) {
+      console.log('[MultiplayerSocket] Cannot send move - not connected');
+      return;
+    }
+    this.socket.emit('multiplayer:move', moveData);
+  }
+
+  // Listen for opponent moves
+  onOpponentMove(cb) {
+    console.log('[MultiplayerSocket] Setting up opponent move listener');
+    if (!this.socket) return () => {};
+    const handler = (moveData) => {
+      console.log('[MultiplayerSocket] Received opponent move:', moveData);
+      cb(moveData);
+    };
+    this.socket.on('multiplayer:opponent-move', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing opponent move listener');
+      this.socket.off('multiplayer:opponent-move', handler);
+    };
+  }
+
+  // Listen for game end events
+  onGameEnd(cb) {
+    console.log('[MultiplayerSocket] Setting up game end listener');
+    if (!this.socket) return () => {};
+    const handler = (data) => {
+      console.log('[MultiplayerSocket] Game ended:', data);
+      cb(data.result, data.reason || '');
+    };
+    this.socket.on('multiplayer:game-end', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing game end listener');
+      this.socket.off('multiplayer:game-end', handler);
+    };
   }
 
   setStatus(status) {

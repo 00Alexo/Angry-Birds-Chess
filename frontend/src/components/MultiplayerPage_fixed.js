@@ -7,7 +7,7 @@ import {
 } from 'react-icons/io5';
 import multiplayerSocket from '../services/multiplayerSocket';
 
-const MultiplayerPage = ({ onBack, onStartGame, userName, playerInventory }) => {
+const MultiplayerPage = ({ onBack, userName, playerInventory }) => {
   const [activeTab, setActiveTab] = useState('queue');
   const [searchQuery, setSearchQuery] = useState('');
   const [isQueuing, setIsQueuing] = useState(false);
@@ -73,32 +73,12 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, playerInventory }) => 
 
   // Function to start the multiplayer game
   const startMultiplayerGame = (matchData) => {
-    console.log('[MultiplayerPage] Match countdown finished, starting multiplayer game:', matchData);
+    // For now, show an alert - later we'll navigate to ChessBoardPage
+    alert(`Starting ${matchData.gameMode} match!\nYou: ${matchData.playerColor}\nOpponent: ${matchData.opponent.username}\n\n(Game navigation not implemented yet)`);
     
     // Reset state
     setMatchFound(null);
     setMatchCountdown(0);
-    setIsMatchStarting(false);
-    
-    // Prepare level data for ChessBoardPage
-    const levelData = {
-      isMultiplayer: true,
-      matchId: matchData.matchId,
-      gameMode: matchData.gameMode,
-      playerColor: matchData.playerColor, // 'white' or 'black'
-      opponent: matchData.opponent,
-      name: `Multiplayer vs ${matchData.opponent.username}`,
-      terrain: 'Multiplayer Arena',
-      birdPieces: matchData.birdPieces || { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
-      pigPieces: matchData.pigPieces || { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
-    };
-    
-    console.log('[MultiplayerPage] Starting game with levelData:', levelData);
-    
-    // Call the onStartGame callback with multiplayer level data
-    if (onStartGame) {
-      onStartGame(levelData);
-    }
   };
 
   // Queue timer effect

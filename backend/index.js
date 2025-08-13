@@ -47,6 +47,13 @@ server.on('upgrade', (req, socket) => {
 const activeGames = new Map();
 // Track online multiplayer presence by socket id
 const onlinePlayers = new Map();
+// Track matchmaking queues
+const matchmakingQueues = {
+  competitive: new Map(), // socketId -> { player, queueTime, ratingRange }
+  unranked: new Map()
+};
+// Store active matches
+const activeMatches = new Map(); // matchId -> { player1, player2, gameState, startTime }
 
 io.on('connection', (socket) => {
   try {
@@ -75,13 +82,22 @@ io.on('connection', (socket) => {
     console.log('🎮 [WebSocket] Game start request:', data);
     
     const gameId = `game_${socket.id}_${Date.now()}`;
-    activeGames.set(gameId, {
+    const gameSession = {
       socketId: socket.id,
       ...data,
       startTime: new Date(),
       moves: 0,       // move count
       moveList: []    // detailed moves for fallback (abandoned games)
-    });
+    };
+    
+    // Store multiplayer-specific data if this is a multiplayer game
+    if (data.isMultiplayer && data.matchId) {
+      gameSession.isMultiplayer = true;
+      gameSession.matchId = data.matchId;
+      console.log(`🎮 [Multiplayer] Storing multiplayer game session for match ${data.matchId}`);
+    }
+    
+    activeGames.set(gameId, gameSession);
 
     if (data.userId) {
       console.log(`🆔 [WebSocket] Stored userId ${data.userId} for game ${gameId}`);
@@ -129,6 +145,96 @@ io.on('connection', (socket) => {
       socket.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
     } catch (err) {
       console.error('❌ [Presence] Failed to send online players to requester:', err);
+    }
+  });
+
+  // Matchmaking: Join queue
+  socket.on('multiplayer:join-queue', (payload = {}) => {
+    try {
+      const gameMode = payload.gameMode === 'unranked' ? 'unranked' : 'competitive';
+      const player = onlinePlayers.get(socket.id);
+      if (!player) {
+        console.warn(`⚠️ [Queue] Player not found in presence for ${socket.id}`);
+        socket.emit('multiplayer:queue-error', { message: 'Player not found in presence' });
+        return;
+      }
+
+      console.log(`🎯 [Queue] Processing join request: ${player.username} -> ${gameMode}`);
+
+      // Remove from any existing queue first
+      const wasInComp = matchmakingQueues.competitive.delete(socket.id);
+      const wasInUnr = matchmakingQueues.unranked.delete(socket.id);
+      if (wasInComp || wasInUnr) {
+        console.log(`🔄 [Queue] Removed ${player.username} from previous queue`);
+      }
+
+      // Add to requested queue
+      const queueEntry = {
+        socketId: socket.id,
+        player: { ...player },
+        queueTime: Date.now(),
+        gameMode,
+        ratingRange: gameMode === 'competitive' ? 200 : 999999 // Wider range for unranked
+      };
+
+      matchmakingQueues[gameMode].set(socket.id, queueEntry);
+      console.log(`✅ [Queue] ${player.username} joined ${gameMode} queue (${matchmakingQueues[gameMode].size} players total)`);
+
+      // Update player status
+      player.status = 'in-queue';
+      onlinePlayers.set(socket.id, player);
+      console.log(`🔄 [Queue] Updated ${player.username} status to in-queue`);
+
+      // Broadcast updated presence and queue stats
+      io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+      broadcastQueueStats();
+
+      // Try to find a match immediately
+      console.log(`🔍 [Queue] Attempting matchmaking for ${gameMode}...`);
+      tryMatchmaking(gameMode);
+
+    } catch (err) {
+      console.error('❌ [Queue] Failed to join queue:', err);
+      socket.emit('multiplayer:queue-error', { message: 'Failed to join queue' });
+    }
+  });
+
+  // Matchmaking: Leave queue
+  socket.on('multiplayer:leave-queue', () => {
+    try {
+      const player = onlinePlayers.get(socket.id);
+      if (!player) return;
+
+      // Remove from all queues
+      const wasInCompetitive = matchmakingQueues.competitive.delete(socket.id);
+      const wasInUnranked = matchmakingQueues.unranked.delete(socket.id);
+
+      if (wasInCompetitive || wasInUnranked) {
+        console.log(`🚫 [Queue] ${player.username} left queue`);
+        
+        // Update player status
+        player.status = 'online';
+        onlinePlayers.set(socket.id, player);
+
+        // Broadcast updated presence and queue stats
+        io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+        broadcastQueueStats();
+      }
+
+    } catch (err) {
+      console.error('❌ [Queue] Failed to leave queue:', err);
+    }
+  });
+
+  // Matchmaking: Get queue stats
+  socket.on('multiplayer:get-queue-stats', () => {
+    try {
+      socket.emit('multiplayer:queue-stats', {
+        competitive: matchmakingQueues.competitive.size,
+        unranked: matchmakingQueues.unranked.size
+      });
+    } catch (err) {
+      console.error('❌ [Queue] Failed to send queue stats:', err);
     }
   });
 
@@ -251,15 +357,17 @@ io.on('connection', (socket) => {
 
   // Track moves (lightweight notification from client)
   socket.on('game-move', (data) => {
-    const { gameId, move, userId } = data || {};
+    const { gameId, move, userId, username } = data || {};
     if (!gameId) return;
     const gameSession = activeGames.get(gameId);
     if (!gameSession) return;
+    
     // If client provided userId late, attach it to the session for proper attribution on disconnect
     if (userId && !gameSession.userId) {
       gameSession.userId = userId;
     }
     gameSession.moves = (gameSession.moves || 0) + 1;
+    
     if (move) {
       if (!Array.isArray(gameSession.moveList)) gameSession.moveList = [];
       if (gameSession.moveList.length < 500) {
@@ -279,21 +387,71 @@ io.on('connection', (socket) => {
           index: gameSession.moveList.length
         });
       }
+      
+      // Occasionally log (every 5 moves)
+      if (gameSession.moves === 1 || gameSession.moves % 5 === 0) {
+        console.log(`♟️ [WebSocket] Move recorded for ${gameId}. Total moves: ${gameSession.moves}`);
+      }
     }
-    // Occasionally log (every 5 moves)
-    if (gameSession.moves === 1 || gameSession.moves % 5 === 0) {
-      console.log(`♟️ [WebSocket] Move recorded for ${gameId}. Total moves: ${gameSession.moves}`);
+  });
+
+  // Multiplayer move handling
+  socket.on('multiplayer:move', (moveData) => {
+    try {
+      console.log('[Multiplayer] Received move:', moveData);
+      const { matchId, move, player } = moveData;
+      
+      // Find the active match
+      const match = activeMatches.get(matchId);
+      if (!match) {
+        console.warn(`[Multiplayer] Match ${matchId} not found`);
+        socket.emit('multiplayer:error', { message: 'Match not found' });
+        return;
+      }
+      
+      // Determine which player is the opponent
+      let opponentSocketId = null;
+      if (match.player1.socketId === socket.id) {
+        opponentSocketId = match.player2.socketId;
+      } else if (match.player2.socketId === socket.id) {
+        opponentSocketId = match.player1.socketId;
+      } else {
+        console.warn(`[Multiplayer] Socket ${socket.id} not part of match ${matchId}`);
+        return;
+      }
+      
+      console.log(`[Multiplayer] Broadcasting move from ${socket.id} to ${opponentSocketId}`);
+      
+      // Send move to opponent
+      io.to(opponentSocketId).emit('multiplayer:opponent-move', {
+        matchId,
+        move,
+        player
+      });
+      
+    } catch (err) {
+      console.error('[Multiplayer] Error handling move:', err);
+      socket.emit('multiplayer:error', { message: 'Failed to process move' });
     }
   });
 
   socket.on('disconnect', () => {
     console.log('🔌 [WebSocket] Disconnected:', socket.id);
+    
     // Remove from presence and broadcast
     if (onlinePlayers.has(socket.id)) {
       const p = onlinePlayers.get(socket.id);
       onlinePlayers.delete(socket.id);
       console.log(`⚫ [Presence] ${p.username} left multiplayer (${socket.id})`);
       io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+    }
+
+    // Remove from matchmaking queues
+    const wasInCompetitive = matchmakingQueues.competitive.delete(socket.id);
+    const wasInUnranked = matchmakingQueues.unranked.delete(socket.id);
+    if (wasInCompetitive || wasInUnranked) {
+      console.log(`🚫 [Queue] Player ${socket.id} removed from queue on disconnect`);
+      broadcastQueueStats();
     }
     
     // Clean up any games for this socket
@@ -387,6 +545,111 @@ io.on('connection', (socket) => {
   });
 });
 
+// Matchmaking helper functions
+function broadcastQueueStats() {
+  const stats = {
+    competitive: matchmakingQueues.competitive.size,
+    unranked: matchmakingQueues.unranked.size
+  };
+  io.emit('multiplayer:queue-stats', stats);
+  console.log(`📊 [Queue] Broadcasting stats: competitive=${stats.competitive}, unranked=${stats.unranked}`);
+}
+
+function tryMatchmaking(gameMode) {
+  const queue = matchmakingQueues[gameMode];
+  console.log(`🔍 [Matchmaking] Checking ${gameMode} queue: ${queue.size} players`);
+  
+  if (queue.size < 2) {
+    console.log(`⏳ [Matchmaking] Not enough players in ${gameMode} queue (need 2, have ${queue.size})`);
+    return;
+  }
+
+  const players = Array.from(queue.values());
+  console.log(`🎮 [Matchmaking] Available players:`, players.map(p => p.player.username));
+  
+  // Simple FIFO matchmaking (can be enhanced with rating-based matching later)
+  for (let i = 0; i < players.length - 1; i++) {
+    const player1 = players[i];
+    const player2 = players[i + 1];
+    
+    console.log(`🤝 [Matchmaking] Attempting to match ${player1.player.username} vs ${player2.player.username}`);
+    
+    // Check if both players are still online
+    if (!onlinePlayers.has(player1.socketId) || !onlinePlayers.has(player2.socketId)) {
+      console.warn(`⚠️ [Matchmaking] One or both players not online anymore`);
+      continue;
+    }
+
+    // Create match
+    const matchId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const match = {
+      matchId,
+      gameMode,
+      player1: { ...player1.player, socketId: player1.socketId },
+      player2: { ...player2.player, socketId: player2.socketId },
+      startTime: Date.now(),
+      status: 'starting'
+    };
+
+    activeMatches.set(matchId, match);
+    console.log(`✨ [Matchmaking] Created match ${matchId}`);
+
+    // Remove players from queue
+    const removed1 = queue.delete(player1.socketId);
+    const removed2 = queue.delete(player2.socketId);
+    console.log(`🗑️ [Matchmaking] Removed players from queue: ${removed1 && removed2}`);
+
+    // Update player statuses
+    const p1 = onlinePlayers.get(player1.socketId);
+    const p2 = onlinePlayers.get(player2.socketId);
+    if (p1) {
+      p1.status = 'in-game';
+      onlinePlayers.set(player1.socketId, p1);
+      console.log(`🔄 [Matchmaking] Updated ${p1.username} status to in-game`);
+    }
+    if (p2) {
+      p2.status = 'in-game';
+      onlinePlayers.set(player2.socketId, p2);
+      console.log(`🔄 [Matchmaking] Updated ${p2.username} status to in-game`);
+    }
+
+    console.log(`🎮 [Matchmaking] Match created: ${matchId} - ${player1.player.username} vs ${player2.player.username} (${gameMode})`);
+
+    // Notify players
+    const matchData1 = {
+      matchId,
+      opponent: player2.player,
+      gameMode,
+      playerColor: 'white',
+      // Add more game setup info
+      birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
+      pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
+    };
+    const matchData2 = {
+      matchId,
+      opponent: player1.player,
+      gameMode,
+      playerColor: 'black',
+      // Add more game setup info
+      birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
+      pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
+    };
+
+    console.log(`📤 [Matchmaking] Sending match-found to ${player1.player.username} (white):`, matchData1);
+    console.log(`📤 [Matchmaking] Sending match-found to ${player2.player.username} (black):`, matchData2);
+
+    io.to(player1.socketId).emit('multiplayer:match-found', matchData1);
+    io.to(player2.socketId).emit('multiplayer:match-found', matchData2);
+
+    // Broadcast updated presence and queue stats
+    io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+    broadcastQueueStats();
+
+    console.log(`✅ [Matchmaking] Match ${matchId} setup complete`);
+    break; // Only create one match per call
+  }
+}
+
 // Connect to MongoDB
 mongoose.connect(process.env.mongoDB)
   .then(() => {
@@ -404,7 +667,12 @@ app.get('/api/socket/status', (req, res) => {
     activeGames: activeGames.size,
     connectedSockets: io.sockets.sockets.size,
   status: 'Simple WebSocket service running',
-  onlinePlayers: onlinePlayers.size
+  onlinePlayers: onlinePlayers.size,
+    queueStats: {
+      competitive: matchmakingQueues.competitive.size,
+      unranked: matchmakingQueues.unranked.size
+    },
+    activeMatches: activeMatches.size
   });
 });
 

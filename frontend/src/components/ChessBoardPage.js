@@ -12,6 +12,7 @@ import { NightmareAI } from './ai/NightmareAI.js';
 import { ImpossibleAI } from './ai/ImpossibleAI.js';
 import socketService from '../services/socketService';
 import simpleSocketService from '../services/simpleSocketService';
+import multiplayerSocket from '../services/multiplayerSocket';
 import apiService from '../services/apiService';
 import { analyzeMove } from '../utils/moveAnalyzer';
 
@@ -72,7 +73,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   const [board, setBoard] = useState([]);
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [possibleMoves, setPossibleMoves] = useState([]);
-  const [currentPlayer, setCurrentPlayer] = useState('birds'); // 'birds' or 'pigs'
+  const [currentPlayer, setCurrentPlayer] = useState('birds'); // 'birds' or 'pigs' - will be updated based on player color
   const [gameStatus, setGameStatus] = useState('playing'); // 'playing', 'checkmate', 'stalemate'
   const [moveHistory, setMoveHistory] = useState([]);
   const [isGameStarted, setIsGameStarted] = useState(false);
@@ -95,6 +96,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   const [premoveHighlight, setPremoveHighlight] = useState(null); // Highlight premove squares
   const [gameStartTime, setGameStartTime] = useState(null); // Track when game started
   const [currentGameId, setCurrentGameId] = useState(null); // Track current game session
+  const [multiplayerCleanup, setMultiplayerCleanup] = useState(null); // Store multiplayer cleanup function
   const moveHistoryRef = useRef(null);
 
   // Refs to store current values for cleanup
@@ -116,6 +118,120 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       levelData
     };
   }, [currentGameId, gameStatus, gameStartTime, moveHistory, levelData]);
+
+  // Set up multiplayer event listeners
+  const setupMultiplayerListeners = () => {
+    console.log('[Multiplayer] Setting up event listeners');
+    
+    // Listen for opponent moves
+    const unsubscribeOpponentMove = multiplayerSocket.onOpponentMove((moveData) => {
+      console.log('[Multiplayer] Received opponent move:', moveData);
+      applyOpponentMove(moveData);
+    });
+    
+    // Listen for game end events
+    const unsubscribeGameEnd = multiplayerSocket.onGameEnd((result, reason = '') => {
+      console.log('[Multiplayer] Game ended:', { result, reason });
+      handleGameEnd(result, reason);
+    });
+    
+    console.log('[Multiplayer] Event listeners setup complete');
+    
+    // Return cleanup function
+    return () => {
+      unsubscribeOpponentMove();
+      unsubscribeGameEnd();
+    };
+  };
+
+  // Helper functions to detect game type
+  const isMultiplayerGame = () => {
+    return levelData?.isMultiplayer === true;
+  };
+
+  const getGameType = () => {
+    if (levelData?.isMultiplayer) return 'multiplayer';
+    if (levelData?.id) return 'campaign';
+    return 'vs-ai';
+  };
+
+  const getOpponentInfo = () => {
+    if (levelData?.isMultiplayer) {
+      return {
+        name: levelData.opponent?.username || 'Opponent',
+        type: 'player',
+        gameMode: levelData.gameMode || 'competitive',
+        playerColor: levelData.playerColor || 'white', // My color
+        matchId: levelData.matchId
+      };
+    }
+    return {
+      name: levelData?.difficulty || 'AI',
+      type: 'ai',
+      gameMode: 'vs-ai',
+      playerColor: 'white'
+    };
+  };
+
+  // Perspective helpers - for multiplayer, both players see their pieces as birds
+  const getMyTeam = () => {
+    if (isMultiplayerGame()) {
+      // In multiplayer, I'm always birds from my perspective
+      return 'birds';
+    }
+    return 'birds'; // Single player is always birds
+  };
+  
+  const getOpponentTeam = () => {
+    if (isMultiplayerGame()) {
+      // In multiplayer, opponent is always pigs from my perspective
+      return 'pigs';
+    }
+    return 'pigs'; // Single player opponent is always pigs
+  };
+  
+  const isBlackPerspective = () => {
+    // In multiplayer, if I'm assigned black color, I need to see the board flipped
+    return isMultiplayerGame() && getOpponentInfo().playerColor === 'black';
+  };
+  
+  const toBoardCoords = (renderRow, renderCol) => {
+    if (isBlackPerspective()) {
+      return { row: 7 - renderRow, col: 7 - renderCol };
+    }
+    return { row: renderRow, col: renderCol };
+  };
+
+  // Visual mapping: always show my pieces as birds, opponent as pigs
+  const getBirdComponentByType = (type, size) => {
+    switch (type) {
+      case 'king': return <RedBird size={size} />;
+      case 'queen': return <Stella size={size} />;
+      case 'bishop': return <WhiteBird size={size} />;
+      case 'knight': return <BlackBird size={size} />;
+      case 'rook': return <YellowBird size={size} />;
+      case 'pawn': return <BlueBird size={size} />;
+      default: return <RedBird size={size} />;
+    }
+  };
+  const getPigComponentByType = (type, size) => {
+    switch (type) {
+      case 'king': return <KingPig size={size} />;
+      case 'queen': return <QueenPig size={size} />;
+      case 'bishop': return <CorporalPig size={size} />;
+      case 'knight': return <NinjaPig size={size} />;
+      case 'rook': return <RegularPig size={size} />;
+      case 'pawn': return <RegularPig size={size} />;
+      default: return <KingPig size={size} />;
+    }
+  };
+  const getVisualPiece = (pieceObj) => {
+    if (!pieceObj) return null;
+    const myTeam = getMyTeam();
+    const size = pieceObj?.piece?.props?.size || 40;
+    const isMine = pieceObj.team === myTeam;
+    return isMine ? getBirdComponentByType(pieceObj.type, size) : getPigComponentByType(pieceObj.type, size);
+  };
 
   // Helper function to end game using WebSocket
   const endGameWithHistory = async (result, endReason = 'checkmate', stars = null, coinsEarned = 0) => {
@@ -221,7 +337,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     }
   }, [coinAnimation.isAnimating]); // Removed dependencies to prevent infinite loop
 
-  // Initiialize AI based on difficulty
+  // Initialize AI based on difficulty
   useEffect(() => {
     const difficulty = levelData?.difficulty?.toLowerCase();
     let ai = null;
@@ -255,18 +371,71 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
 
     const initializeGame = async () => {
       try {
+        // Debug logging
+        console.log('[ChessBoardPage] Initializing game with data:', {
+          levelData,
+          isMultiplayer: isMultiplayerGame(),
+          user: user
+        });
+
         // If we expect an authenticated user but it's not loaded yet, wait before starting so userId is available
         const token = apiService.getToken?.() || localStorage.getItem('authToken');
         if (token && (isLoading || !user)) {
           console.log('⏳ [Game] Auth token present but user not loaded yet — delaying WebSocket start');
           return;
         }
+
+        // For multiplayer games, connect to the multiplayer socket instead
+        if (isMultiplayerGame()) {
+          console.log('🎮 [Multiplayer] Setting up multiplayer game connection');
+          
+          // Connect to multiplayer socket if not already connected
+          if (!multiplayerSocket.connected) {
+            await multiplayerSocket.connect({ 
+              username: user?.username,
+              userId: user?.id || user?._id,
+              rating: user?.playerData?.rating || 1500
+            });
+          }
+          
+          // Set status to in-game
+          multiplayerSocket.setStatus('in-game');
+          
+          // Set up multiplayer event listeners
+          const cleanup = setupMultiplayerListeners();
+          setMultiplayerCleanup(() => cleanup);
+          
+          // Use match data as game ID
+          const gameId = levelData.matchId || `mp_${Date.now()}`;
+          setCurrentGameId(gameId);
+          setIsGameStarted(true);
+          
+          // Set initial turn based on player color
+          const myColor = getOpponentInfo().playerColor;
+          setCurrentPlayer(myColor === 'white' ? 'birds' : 'pigs');
+          
+          console.log(`✅ [Multiplayer] Game initialized: ${gameId}, I play as ${myColor}`);
+          
+          // Debug log the perspective
+          console.log(`🎮 [Multiplayer Debug] Player color: ${myColor}`);
+          console.log(`🎮 [Multiplayer Debug] My team: ${getMyTeam()}`);
+          console.log(`🎮 [Multiplayer Debug] Opponent team: ${getOpponentTeam()}`);
+          console.log(`🎮 [Multiplayer Debug] Black perspective: ${isBlackPerspective()}`);
+          
+          return;
+        }
+
+        // Single player game logic (unchanged)
         // Connect to WebSocket for this game
         await simpleSocketService.connect();
         
+        // Get game and opponent info
+        const gameType = getGameType();
+        const opponentInfo = getOpponentInfo();
+        
         // Start the game
         const gameData = {
-          gameType: levelData?.id ? 'campaign' : 'vs-ai',
+          gameType: gameType,
           opponent: levelData?.difficulty || 'easy',
           levelId: levelData?.id || null,
           // Include userId at start so backend can store it in activeGames map
@@ -294,7 +463,15 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     // Cleanup on unmount
     return () => {
       console.log('🧹 [Game] Component unmounting, disconnecting WebSocket');
-      simpleSocketService.disconnect();
+      if (isMultiplayerGame()) {
+        multiplayerSocket.setStatus('online');
+        // Clean up multiplayer listeners
+        if (multiplayerCleanup) {
+          multiplayerCleanup();
+        }
+      } else {
+        simpleSocketService.disconnect();
+      }
     };
   }, [levelData, user, isLoading, isAuthenticated]);
 
@@ -303,6 +480,23 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
 
   useEffect(() => {
     initializeBoard();
+  }, [levelData]);
+
+  // Initialize game
+  useEffect(() => {
+    if (isMultiplayerGame()) {
+      // In multiplayer, set initial turn based on who has white pieces
+      const myColor = getOpponentInfo().playerColor;
+      if (myColor === 'white') {
+        setCurrentPlayer('birds'); // White starts, I play as birds
+      } else {
+        setCurrentPlayer('pigs'); // White starts, opponent plays as birds (but I see them as pigs)
+      }
+      console.log(`🎮 [Multiplayer] Initial turn: ${myColor === 'white' ? 'My turn (birds)' : 'Opponent turn (pigs)'}`);
+    } else {
+      // In single-player, always start with birds (player)
+      setCurrentPlayer('birds');
+    }
   }, [levelData]);
 
   // Timer effect for hard, nightmare, and impossible difficulties
@@ -462,11 +656,36 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
     };
     
-    // Setup Pigs (Black pieces) - top rows
-    setupPigPieces(newBoard, pieceConfig.pigPieces, mainPieceSize, pawnSize);
-    
-    // Setup Birds (White pieces) - bottom rows  
-    setupBirdPieces(newBoard, pieceConfig.birdPieces, mainPieceSize, pawnSize);
+    if (isMultiplayerGame()) {
+      console.log('🎮 [Multiplayer] Setting up board with proper team assignments');
+      
+      const myColor = getOpponentInfo().playerColor; // 'white' or 'black'
+      const myTeam = getMyTeam(); // Always 'birds' from my perspective
+      const opponentTeam = getOpponentTeam(); // Always 'pigs' from my perspective
+      
+      console.log(`🎮 [Multiplayer] I am ${myColor}, playing as ${myTeam} vs ${opponentTeam}`);
+      
+      // Standard setup but with team assignments based on perspective
+      if (myColor === 'white') {
+        // I'm white, so I play birds (bottom), opponent plays pigs (top)
+        setupPlayerPieces(newBoard, pieceConfig.birdPieces, mainPieceSize, pawnSize, 6, 7, 'birds');   
+        setupOpponentPieces(newBoard, pieceConfig.pigPieces, mainPieceSize, pawnSize, 1, 0, 'pigs');
+      } else {
+        // I'm black, so from the board's perspective I'm pigs (top) but I see myself as birds (bottom)
+        // The board will be flipped visually via toBoardCoords
+        setupPlayerPieces(newBoard, pieceConfig.birdPieces, mainPieceSize, pawnSize, 1, 0, 'pigs');   
+        setupOpponentPieces(newBoard, pieceConfig.pigPieces, mainPieceSize, pawnSize, 6, 7, 'birds');
+      }
+      
+      console.log('🎮 [Multiplayer] Board setup complete');
+    } else {
+      console.log('🎮 [Single-player] Setting up board with Birds vs Pigs');
+      // Setup Pigs (Black pieces) - top rows
+      setupPigPieces(newBoard, pieceConfig.pigPieces, mainPieceSize, pawnSize);
+      
+      // Setup Birds (White pieces) - bottom rows  
+      setupBirdPieces(newBoard, pieceConfig.birdPieces, mainPieceSize, pawnSize, 'white');
+    }
 
     console.log('🎯 Final board state after initialization:');
     console.log('Row 0 (Pigs):', newBoard[0].map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
@@ -531,54 +750,99 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     console.log(`♟️ Placed ${pawnCount} pig pawns starting at column ${startCol}`);
   };
 
-  const setupBirdPieces = (board, birdConfig, mainSize, pawnSize) => {
-    console.log('🐦 Setting up bird pieces with config:', birdConfig);
+  const setupBirdPieces = (board, birdConfig, mainSize, pawnSize, color = 'white') => {
+    console.log(`🐦 Setting up bird pieces with config:`, birdConfig, `color: ${color}`);
+    
+    // Determine team name and board positions based on color
+    const teamName = color === 'white' ? 'birds' : 'pigs'; // Keep internal logic the same
+    const backRankRow = color === 'white' ? 7 : 0; // White on bottom (row 7), black on top (row 0)
+    const pawnRow = color === 'white' ? 6 : 1;     // Pawns one row in front
     
     // Setup bird back rank - Initialize all positions as null first
     const backRank = Array(8).fill(null);
     
     // Always place king in center
     const kingPos = 4;
-    backRank[kingPos] = { type: 'king', team: 'birds', piece: <RedBird size={mainSize} />, moved: false };
-    console.log(`👑 Placed bird king at position ${kingPos}`);
+    backRank[kingPos] = { type: 'king', team: teamName, piece: <RedBird size={mainSize} />, moved: false };
+    console.log(`👑 Placed ${color} bird king at position ${kingPos} (row ${backRankRow})`);
     
     // Place queen if available
     if (birdConfig.queen) {
-      backRank[3] = { type: 'queen', team: 'birds', piece: <Stella size={mainSize} />, moved: false };
-      console.log('👸 Placed bird queen at position 3');
+      backRank[3] = { type: 'queen', team: teamName, piece: <Stella size={mainSize} />, moved: false };
+      console.log(`👸 Placed ${color} bird queen at position 3 (row ${backRankRow})`);
     }
     
     // Place bishops
     const bishopPositions = [2, 5];
     for (let i = 0; i < Math.min(birdConfig.bishops || 0, 2); i++) {
-      backRank[bishopPositions[i]] = { type: 'bishop', team: 'birds', piece: <WhiteBird size={mainSize} />, moved: false };
-      console.log(`♗ Placed bird bishop ${i + 1} at position ${bishopPositions[i]}`);
+      backRank[bishopPositions[i]] = { type: 'bishop', team: teamName, piece: <WhiteBird size={mainSize} />, moved: false };
+      console.log(`♗ Placed ${color} bird bishop ${i + 1} at position ${bishopPositions[i]} (row ${backRankRow})`);
     }
     
     // Place knights
     const knightPositions = [1, 6];
     for (let i = 0; i < Math.min(birdConfig.knights || 0, 2); i++) {
-      backRank[knightPositions[i]] = { type: 'knight', team: 'birds', piece: <BlackBird size={mainSize} />, moved: false };
-      console.log(`♞ Placed bird knight ${i + 1} at position ${knightPositions[i]}`);
+      backRank[knightPositions[i]] = { type: 'knight', team: teamName, piece: <BlackBird size={mainSize} />, moved: false };
+      console.log(`♞ Placed ${color} bird knight ${i + 1} at position ${knightPositions[i]} (row ${backRankRow})`);
     }
     
     // Place rooks
     const rookPositions = [0, 7];
     for (let i = 0; i < Math.min(birdConfig.rooks || 0, 2); i++) {
-      backRank[rookPositions[i]] = { type: 'rook', team: 'birds', piece: <YellowBird size={mainSize} />, moved: false };
-      console.log(`♖ Placed bird rook ${i + 1} at position ${rookPositions[i]}`);
+      backRank[rookPositions[i]] = { type: 'rook', team: teamName, piece: <YellowBird size={mainSize} />, moved: false };
+      console.log(`♖ Placed ${color} bird rook ${i + 1} at position ${rookPositions[i]} (row ${backRankRow})`);
     }
     
-    board[7] = backRank;
-    console.log('🏁 Final bird back rank:', backRank.map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
+    board[backRankRow] = backRank;
+    console.log(`🏁 Final ${color} bird back rank:`, backRank.map((piece, i) => piece ? `${i}:${piece.type}` : `${i}:empty`));
     
     // Setup bird pawns - centered based on count
     const pawnCount = Math.min(birdConfig.pawns || 0, 8);
     const startCol = Math.floor((8 - pawnCount) / 2);
     for (let i = 0; i < pawnCount; i++) {
-      board[6][startCol + i] = { type: 'pawn', team: 'birds', piece: <BlueBird size={pawnSize} />, moved: false };
+      board[pawnRow][startCol + i] = { type: 'pawn', team: teamName, piece: <BlueBird size={pawnSize} />, moved: false };
     }
-    console.log(`♟️ Placed ${pawnCount} bird pawns starting at column ${startCol}`);
+    console.log(`♟️ Placed ${pawnCount} ${color} bird pawns at row ${pawnRow} starting at column ${startCol}`);
+  };
+
+  // Setup player's own pieces at bottom with provided team (birds for white, pigs for black)
+  const setupPlayerPieces = (board, pieceConfig, mainSize, pawnSize, pawnRow, backRankRow, teamName) => {
+    console.log(`🐦 [Player] Setting up MY pieces at bottom (team=${teamName})`);
+    const backRank = Array(8).fill(null);
+    const myTeam = teamName;
+    backRank[4] = { type: 'king', team: myTeam, piece: teamName === 'birds' ? <RedBird size={mainSize} /> : <KingPig size={mainSize} />, moved: false };
+    if (pieceConfig.queen) backRank[3] = { type: 'queen', team: myTeam, piece: <Stella size={mainSize} />, moved: false };
+    const bishopPositions = [2, 5];
+    for (let i = 0; i < Math.min(pieceConfig.bishops || 0, 2); i++) backRank[bishopPositions[i]] = { type: 'bishop', team: myTeam, piece: teamName === 'birds' ? <WhiteBird size={mainSize} /> : <CorporalPig size={mainSize} />, moved: false };
+    const knightPositions = [1, 6];
+    for (let i = 0; i < Math.min(pieceConfig.knights || 0, 2); i++) backRank[knightPositions[i]] = { type: 'knight', team: myTeam, piece: teamName === 'birds' ? <BlackBird size={mainSize} /> : <NinjaPig size={mainSize} />, moved: false };
+    const rookPositions = [0, 7];
+    for (let i = 0; i < Math.min(pieceConfig.rooks || 0, 2); i++) backRank[rookPositions[i]] = { type: 'rook', team: myTeam, piece: teamName === 'birds' ? <YellowBird size={mainSize} /> : <RegularPig size={mainSize} />, moved: false };
+    board[backRankRow] = backRank;
+    const pawnCount = Math.min(pieceConfig.pawns || 0, 8);
+    const startCol = Math.floor((8 - pawnCount) / 2);
+    for (let i = 0; i < pawnCount; i++) board[pawnRow][startCol + i] = { type: 'pawn', team: myTeam, piece: teamName === 'birds' ? <BlueBird size={pawnSize} /> : <RegularPig size={pawnSize} />, moved: false };
+    console.log('🐦 [Player] My pieces setup complete');
+  };
+
+  // Setup opponent's pieces at top with provided team (pigs for white's opponent, birds for black's opponent)
+  const setupOpponentPieces = (board, pieceConfig, mainSize, pawnSize, pawnRow, backRankRow, teamName) => {
+    console.log(`🐷 [Opponent] Setting up OPPONENT pieces at top (team=${teamName})`);
+    const backRank = Array(8).fill(null);
+    const opponentTeam = teamName;
+    backRank[4] = { type: 'king', team: opponentTeam, piece: teamName === 'pigs' ? <KingPig size={mainSize} /> : <RedBird size={mainSize} />, moved: false };
+    if (pieceConfig.queen) backRank[3] = { type: 'queen', team: opponentTeam, piece: teamName === 'pigs' ? <QueenPig size={mainSize} /> : <Stella size={mainSize} />, moved: false };
+    const bishopPositions = [2, 5];
+    for (let i = 0; i < Math.min(pieceConfig.bishops || 0, 2); i++) backRank[bishopPositions[i]] = { type: 'bishop', team: opponentTeam, piece: teamName === 'pigs' ? <CorporalPig size={mainSize} /> : <WhiteBird size={mainSize} />, moved: false };
+    const knightPositions = [1, 6];
+    for (let i = 0; i < Math.min(pieceConfig.knights || 0, 2); i++) backRank[knightPositions[i]] = { type: 'knight', team: opponentTeam, piece: teamName === 'pigs' ? <NinjaPig size={mainSize} /> : <BlackBird size={mainSize} />, moved: false };
+    const rookPositions = [0, 7];
+    for (let i = 0; i < Math.min(pieceConfig.rooks || 0, 2); i++) backRank[rookPositions[i]] = { type: 'rook', team: opponentTeam, piece: teamName === 'pigs' ? <RegularPig size={mainSize} /> : <YellowBird size={mainSize} />, moved: false };
+    board[backRankRow] = backRank;
+    const pawnCount = Math.min(pieceConfig.pawns || 0, 8);
+    const startCol = Math.floor((8 - pawnCount) / 2);
+    for (let i = 0; i < pawnCount; i++) board[pawnRow][startCol + i] = { type: 'pawn', team: opponentTeam, piece: teamName === 'pigs' ? <RegularPig size={pawnSize} /> : <BlueBird size={pawnSize} />, moved: false };
+    console.log('🐷 [Opponent] Opponent pieces setup complete');
   };
 
   const isValidMove = (fromRow, fromCol, toRow, toCol) => {
@@ -624,6 +888,83 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       }
       setIsAiThinking(false);
     });
+  };
+
+  // Helper function to check game end conditions (draw, checkmate, stalemate)
+  const checkGameEndConditions = async (newBoard, nextPlayer) => {
+    if (!aiInstance) return;
+
+    // Check for draws first
+    if (aiInstance.hasInsufficientMaterial(newBoard)) {
+      setGameStatus('stalemate');
+      setGameResult('draw');
+      const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+      await endGameWithHistory('draw', 'insufficient-material', levelData ? 1 : null, coinsEarned);
+      setTimeout(() => setShowGameEndModal(true), 500);
+      return;
+    }
+    
+    if (aiInstance.isThreefoldRepetition(positionHistory)) {
+      setGameStatus('stalemate');
+      setGameResult('draw');
+      const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+      await endGameWithHistory('draw', 'threefold-repetition', levelData ? 1 : null, coinsEarned);
+      setTimeout(() => setShowGameEndModal(true), 500);
+      return;
+    }
+    
+    if (aiInstance.isFiftyMoveRule(moveHistory)) {
+      setGameStatus('stalemate');
+      setGameResult('draw');
+      const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+      await endGameWithHistory('draw', 'fifty-move-rule', levelData ? 1 : null, coinsEarned);
+      setTimeout(() => setShowGameEndModal(true), 500);
+      return;
+    }
+    
+    // Check for checkmate
+    if (aiInstance.isCheckmate(newBoard, nextPlayer, lastMove, { positionHistory, fiftyMoveCounter })) {
+      setGameStatus('checkmate');
+      const winner = currentPlayer;
+      
+      // Determine if we won
+      let isPlayerWin = false;
+      if (isMultiplayerGame()) {
+        const myColor = getOpponentInfo().playerColor;
+        isPlayerWin = winner === myColor;
+      } else {
+        isPlayerWin = winner === 'birds';
+      }
+      
+      setGameResult(isPlayerWin ? 'win' : 'loss');
+      
+      // Handle win/loss rewards
+      if (isPlayerWin && levelData) {
+        try {
+          const { default: campaignManager } = await import('../utils/campaignManager');
+          await campaignManager.completeLevel(levelData.id, 3, calculateCoinReward(), null, gameStartTime);
+        } catch (error) {
+          console.error('Failed to complete level:', error);
+        }
+      } else if (levelData) {
+        await endGameWithHistory('loss', 'checkmate', 0, 0);
+      }
+      
+      setTimeout(() => setShowGameEndModal(true), 500);
+      return;
+    }
+    
+    // Check for stalemate
+    if (aiInstance.getAllPossibleMoves(newBoard, nextPlayer, lastMove, { positionHistory, fiftyMoveCounter }).length === 0) {
+      const isKingInCheck = aiInstance.isKingInCheck(newBoard, nextPlayer);
+      if (!isKingInCheck) {
+        setGameStatus('stalemate');
+        setGameResult('draw');
+        const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
+        await endGameWithHistory('draw', 'stalemate', levelData ? 1 : null, coinsEarned);
+        setTimeout(() => setShowGameEndModal(true), 500);
+      }
+    }
   };
 
   const executeMove = (fromRow, fromCol, toRow, toCol, specialMove = null, promotionType = 'queen') => {
@@ -693,6 +1034,17 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     
     setBoard(newBoard);
     
+    // Only check win conditions for single-player games or specific king capture scenarios
+    if (!aiInstance) {
+      checkWinCondition(newBoard);
+    }
+    
+    // Check for game end conditions after move
+    if (!isMultiplayerGame()) {
+      // Only run game end checks for single-player games
+      checkGameEndConditions(newBoard, nextPlayer);
+    }
+    
     // Analyze move (lightweight heuristic) - needs pre & post boards
     try {
       const boardBefore = board; // previous board state
@@ -746,384 +1098,83 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     setLastMove(moveData);
     
     setMoveHistory(prev => [...prev, moveData]);
-    // Notify backend a move occurred for abandonment tracking
+    
+    // Send move to backend for tracking (single-player or general tracking)
     if (currentGameId) {
       try {
-        simpleSocketService.socket?.emit('game-move', { 
-          gameId: currentGameId,
-          userId: user?.id || user?._id,
-          username: user?.username,
-          move: {
-            from: moveData.fromPosition,
-            to: moveData.toPosition,
-            piece: moveData.piece,
-            team: moveData.team,
-            actor: moveData.actor,
-            captured: moveData.captured,
-            special: moveData.special || null,
-            isCheck: !!moveData.isCheck,
-            classification: moveData.analysis?.classification,
-            evalBefore: moveData.analysis?.evalBefore,
-            evalAfter: moveData.analysis?.evalAfter
-          }
-        });
+        if (isMultiplayerGame()) {
+          // Send move to opponent via multiplayer socket
+          const moveDataForOpponent = {
+            matchId: getOpponentInfo().matchId,
+            move: {
+              from: [fromRow, fromCol],
+              to: [toRow, toCol],
+              piece: moveData.piece,
+              team: moveData.team,
+              captured: moveData.captured,
+              special: specialMove,
+              promotionType: promotionType
+            },
+            player: {
+              username: user?.username,
+              userId: user?.id || user?._id
+            }
+          };
+          
+          // Send via multiplayer socket
+          console.log('📤 [Multiplayer] Sending move to opponent:', moveDataForOpponent);
+          multiplayerSocket.sendMove(moveDataForOpponent);
+        } else {
+          // Single player tracking
+          simpleSocketService.socket?.emit('game-move', { 
+            gameId: currentGameId,
+            userId: user?.id || user?._id,
+            username: user?.username,
+            move: {
+              from: moveData.fromPosition,
+              to: moveData.toPosition,
+              piece: moveData.piece,
+              team: moveData.team,
+              actor: moveData.actor,
+              captured: moveData.captured,
+              special: moveData.special || null,
+              isCheck: !!moveData.isCheck,
+              classification: moveData.analysis?.classification,
+              evalBefore: moveData.analysis?.evalBefore,
+              evalAfter: moveData.analysis?.evalAfter
+            }
+          });
+        }
       } catch (e) {
         // non-fatal
       }
     }
     
-    // Save position for repetition detection
+    // Save position for repetition detection  
     savePositionToHistory(newBoard, currentPlayer === 'birds' ? 'pigs' : 'birds');
     
-    // Check for checkmate after the move
-    const newCurrentPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
+    // Check for checkmate after the move - determine next player
+    const nextPlayer = currentPlayer === 'birds' ? 'pigs' : 'birds';
     
-    // Use a timeout to allow the board to update before checking game status
-    setTimeout(() => {
-      // Check for draws first
-      if (aiInstance.hasInsufficientMaterial(newBoard)) {
-        setGameStatus('stalemate');
-        setGameResult('draw');
-        
-        // End game in history with draw
-        (async () => {
-          const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
-          await endGameWithHistory('draw', 'insufficient-material', levelData ? 1 : null, coinsEarned);
-        })();
-        
-        // Award partial coins for draw
-        if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward();
-          const coinsEarned = Math.floor(baseCoins / 2);
-          const currentCoins = playerInventory?.coins || 0;
-          
-          // Start coin animation
-          setCoinAnimation({
-            isAnimating: true,
-            startAmount: currentCoins,
-            endAmount: currentCoins + coinsEarned,
-            currentAmount: currentCoins
-          });
-          
-          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
-          console.log(`🤝 Draw by insufficient material! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
+    // Run comprehensive game end checks
+    checkGameEndConditions(newBoard, nextPlayer);
+    
+    // Check if the move resulted in check
+    const isCheckMove = aiInstance.isKingInCheck(newBoard, nextPlayer);
+    if (isCheckMove) {
+      // Update the move history to indicate check
+      setMoveHistory(prev => {
+        const updatedHistory = [...prev];
+        const lastMove = updatedHistory[updatedHistory.length - 1];
+        if (lastMove) {
+          lastMove.isCheck = true;
         }
-        
-        setTimeout(() => setShowGameEndModal(true), 500);
-        console.log('Draw by insufficient material!');
-        return;
-      }
-      
-      if (aiInstance.isThreefoldRepetition(positionHistory)) {
-        setGameStatus('stalemate');
-        setGameResult('draw');
-        
-        // End game in history with draw
-        (async () => {
-          const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
-          await endGameWithHistory('draw', 'threefold-repetition', levelData ? 1 : null, coinsEarned);
-        })();
-        
-        // Award partial coins for draw
-        if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward();
-          const coinsEarned = Math.floor(baseCoins / 2);
-          const currentCoins = playerInventory?.coins || 0;
-          
-          // Start coin animation
-          setCoinAnimation({
-            isAnimating: true,
-            startAmount: currentCoins,
-            endAmount: currentCoins + coinsEarned,
-            currentAmount: currentCoins
-          });
-          
-          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
-          console.log(`🤝 Draw by threefold repetition! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
-        }
-        
-        setTimeout(() => setShowGameEndModal(true), 500);
-        console.log('Draw by threefold repetition!');
-        return;
-      }
-      
-      if (aiInstance.isFiftyMoveRule(moveHistory)) {
-        setGameStatus('stalemate');
-        setGameResult('draw');
-        
-        // End game in history with draw
-        (async () => {
-          const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25;
-          await endGameWithHistory('draw', 'fifty-move-rule', levelData ? 1 : null, coinsEarned);
-        })();
-        
-        // Award partial coins for draw
-        if (levelData && addCoins && completeLevelWithStars) {
-          const baseCoins = calculateCoinReward();
-          const coinsEarned = Math.floor(baseCoins / 2);
-          const currentCoins = playerInventory?.coins || 0;
-          
-          // Start coin animation
-          setCoinAnimation({
-            isAnimating: true,
-            startAmount: currentCoins,
-            endAmount: currentCoins + coinsEarned,
-            currentAmount: currentCoins
-          });
-          
-          // Record the draw game
-          if (gameStartTime) {
-            (async () => {
-              try {
-                const { default: campaignManager } = await import('../utils/campaignManager');
-                const gameDuration = Date.now() - gameStartTime;
-                await campaignManager.endCampaignGame('draw', gameDuration, levelData.id, 0, coinsEarned);
-                console.log(`🤝 Game ended in draw (50-move rule) for level ${levelData.id}`);
-              } catch (error) {
-                console.error('Failed to record game draw:', error);
-              }
-            })();
-          }
-          
-          completeLevelWithStars(levelData.id, 1, coinsEarned); // 1 star for draw
-          console.log(`🤝 Draw by 50-move rule! Earned ${coinsEarned} coins (${levelData.difficulty} difficulty)!`);
-        }
-        
-        setTimeout(() => setShowGameEndModal(true), 500);
-        console.log('Draw by 50-move rule!');
-        return;
-      }
-      
-      if (aiInstance && aiInstance.isCheckmate(newBoard, newCurrentPlayer, lastMove, { positionHistory, fiftyMoveCounter })) {
-        setGameStatus('checkmate');
-        // Winner is the team that just moved
-        const winner = currentPlayer;
-        const isPlayerWin = winner === 'birds';
-        setGameResult(isPlayerWin ? 'win' : 'loss');
-        
-        // Award coins for winning and save level progress
-        if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
-          // Check if this is a replay (level already completed) for campaign games
-          const calculateFinalCoins = async () => {
-            let coinsEarned = calculateCoinReward();
-            
-            if (levelData.id) {
-              try {
-                const { default: campaignManager } = await import('../utils/campaignManager');
-                await campaignManager.loadProgress(); // Ensure progress is loaded
-                const isAlreadyCompleted = campaignManager.isLevelCompleted(levelData.id);
-                
-                if (isAlreadyCompleted) {
-                  console.log(`🔄 Level ${levelData.id} is a replay - setting coins to 0`);
-                  coinsEarned = 0;
-                } else {
-                  console.log(`🆕 Level ${levelData.id} is first completion - awarding ${coinsEarned} coins`);
-                }
-              } catch (error) {
-                console.error('❌ Failed to check completion status, awarding coins anyway:', error);
-                // Keep original coinsEarned value as fallback
-              }
-            }
-            
-            return coinsEarned;
-          };
-
-          (async () => {
-            const coinsEarned = await calculateFinalCoins();
-            const currentCoins = playerInventory?.coins || 0;
-          
-          // Start coin animation
-          setCoinAnimation({
-            isAnimating: true,
-            startAmount: currentCoins,
-            endAmount: currentCoins + coinsEarned,
-            currentAmount: currentCoins
-          });
-          
-          // For campaign games, use campaign manager which handles both game ending and level completion
-          if (levelData.id && levelData.id !== 'undefined' && levelData.id !== null) {
-            console.log(`🎯 Campaign game won - using campaign manager for level ${levelData.id}`);
-            
-            try {
-              const { default: campaignManager } = await import('../utils/campaignManager');
-              const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);
-              console.log(`✅ Campaign level ${levelData.id} completed:`, result);
-            } catch (error) {
-              console.error(`❌ Failed to complete campaign level ${levelData.id}:`, error);
-              // Fallback to just ending the game
-              await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
-            }
-          } else {
-            // For non-campaign games, just end the game
-            console.log(`🎯 Non-campaign game won - ending game only`);
-            await endGameWithHistory('win', 'checkmate', 3, coinsEarned);
-          }
-        })();
-        } else if (!isPlayerWin && levelData && gameStartTime) {
-          // Player lost - always just record the loss (no campaign completion)
-          console.log(`💀 Game lost - ending game only`);
-          (async () => {
-            await endGameWithHistory('loss', 'checkmate', 0, 0);
-          })();
-        } else if (!isPlayerWin && gameStartTime) {
-          // Non-campaign game loss
-          console.log(`💀 Non-campaign game lost - ending game only`);
-          (async () => {
-            await endGameWithHistory('loss', 'checkmate', 0, 0);
-          })();
-        } else if (gameStartTime) {
-          // Non-campaign game ended
-          (async () => {
-            await endGameWithHistory(isPlayerWin ? 'win' : 'loss', 'checkmate', null, isPlayerWin ? 50 : 0);
-          })();
-        }
-        
-        setTimeout(() => {
-          console.log("🎉 Setting showGameEndModal to true - victory screen should appear");
-          setShowGameEndModal(true);
-        }, 500); // Small delay for dramatic effect
-        console.log(`Checkmate! ${currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'} win!`);
-      } else if (aiInstance && aiInstance.getAllPossibleMoves(newBoard, newCurrentPlayer, lastMove, { positionHistory, fiftyMoveCounter }).length === 0) {
-        // No moves available - check if it's stalemate (king not in check) or missed checkmate
-        const isKingInCheck = aiInstance.isKingInCheck(newBoard, newCurrentPlayer);
-        
-        if (!isKingInCheck) {
-          // True stalemate - no moves and king not in check
-          setGameStatus('stalemate');
-          setGameResult('draw');
-          
-          // End game in history with draw
-          (async () => {
-            const coinsEarned = levelData ? Math.floor(calculateCoinReward() / 2) : 25; // Half coins for draw
-            await endGameWithHistory('draw', 'stalemate', levelData ? 1 : null, coinsEarned);
-          })();
-          
-          // Award partial coins for draw but DON'T complete the level
-          if (levelData && addCoins) {
-            const baseCoins = calculateCoinReward();
-            const coinsEarned = Math.floor(baseCoins / 2);
-            const currentCoins = playerInventory?.coins || 0;
-            
-            // Start coin animation
-            setCoinAnimation({
-              isAnimating: true,
-              startAmount: currentCoins,
-              endAmount: currentCoins + coinsEarned,
-              currentAmount: currentCoins
-            });
-            
-            // Record the draw game
-            if (gameStartTime) {
-              (async () => {
-                try {
-                  const { default: campaignManager } = await import('../utils/campaignManager');
-                  const gameDuration = Date.now() - gameStartTime;
-                  await campaignManager.endCampaignGame('draw', gameDuration, levelData.id, 0, coinsEarned);
-                  console.log(`🤝 Game ended in stalemate for level ${levelData.id}`);
-                } catch (error) {
-                  console.error('Failed to record game draw:', error);
-                }
-              })();
-            }
-            
-            // Only add coins, don't complete level - stalemate doesn't count as a campaign win
-            addCoins(coinsEarned);
-            console.log(`🤝 Stalemate! Earned ${coinsEarned} coins but level not completed (${levelData.difficulty} difficulty)!`);
-          }
-          
-          setTimeout(() => setShowGameEndModal(true), 500);
-          console.log('True stalemate - King not in check but no moves available!');
-        } else {
-          // This should be checkmate but wasn't caught above - treat as checkmate
-          setGameStatus('checkmate');
-          const winner = currentPlayer;
-          const isPlayerWin = winner === 'birds';
-          setGameResult(isPlayerWin ? 'win' : 'loss');
-          
-          // Award coins for winning if player won
-          if (isPlayerWin && levelData && addCoins && completeLevelWithStars) {
-            // Check if this is a replay (level already completed) for campaign games
-            const calculateFinalCoins = async () => {
-              let coinsEarned = calculateCoinReward();
-              
-              if (levelData.id) {
-                try {
-                  const { default: campaignManager } = await import('../utils/campaignManager');
-                  await campaignManager.loadProgress(); // Ensure progress is loaded
-                  const isAlreadyCompleted = campaignManager.isLevelCompleted(levelData.id);
-                  
-                  if (isAlreadyCompleted) {
-                    console.log(`🔄 Level ${levelData.id} is a replay (missed checkmate) - setting coins to 0`);
-                    coinsEarned = 0;
-                  } else {
-                    console.log(`🆕 Level ${levelData.id} is first completion (missed checkmate) - awarding ${coinsEarned} coins`);
-                  }
-                } catch (error) {
-                  console.error('❌ Failed to check completion status, awarding coins anyway:', error);
-                  // Keep original coinsEarned value as fallback
-                }
-              }
-              
-              return coinsEarned;
-            };
-
-            (async () => {
-              const coinsEarned = await calculateFinalCoins();
-              const currentCoins = playerInventory?.coins || 0;
-            
-              // Start coin animation
-              setCoinAnimation({
-                isAnimating: true,
-                startAmount: currentCoins,
-                endAmount: currentCoins + coinsEarned,
-                currentAmount: currentCoins
-              });
-              
-              // Complete level using campaign manager directly
-              try {
-                const { default: campaignManager } = await import('../utils/campaignManager');
-                const result = await campaignManager.completeLevel(levelData.id, 3, coinsEarned, null, gameStartTime);
-                console.log(`🏆 Level ${levelData.id} completed via CampaignManager (missed checkmate):`, result);
-              } catch (error) {
-                console.error(`❌ Failed to complete level ${levelData.id}:`, error);
-              }
-            })();
-          } else if (!isPlayerWin && levelData && gameStartTime) {
-            // Player lost - record the loss
-            (async () => {
-              try {
-                const { default: campaignManager } = await import('../utils/campaignManager');
-                const gameDuration = Date.now() - gameStartTime;
-                await campaignManager.endCampaignGame('loss', gameDuration, levelData.id, 0, 0);
-                console.log(`💀 Game lost by checkmate (missed case) for level ${levelData.id}`);
-              } catch (error) {
-                console.error('Failed to record game loss:', error);
-              }
-            })();
-          }
-          
-          console.log('Missed checkmate case - no moves and king in check, treating as checkmate');
-          setTimeout(() => setShowGameEndModal(true), 500);
-        }
-      }
-      
-      // Check if the move resulted in check
-      const isCheckMove = aiInstance.isKingInCheck(newBoard, newCurrentPlayer);
-      if (isCheckMove) {
-        // Update the move history to indicate check
-        setMoveHistory(prev => {
-          const updatedHistory = [...prev];
-          const lastMove = updatedHistory[updatedHistory.length - 1];
-          if (lastMove) {
-            lastMove.isCheck = true;
-          }
-          return updatedHistory;
-        });
-      }
-    }, 100);
+        return updatedHistory;
+      });
+    }
     
     // Switch players and reset timer
-    setCurrentPlayer(newCurrentPlayer);
+    setCurrentPlayer(nextPlayer);
     const difficulty = levelData?.difficulty?.toLowerCase();
     if (difficulty === 'hard') {
       setTimeRemaining(45);
@@ -1132,11 +1183,11 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     } else if (difficulty === 'impossible') {
       setTimeRemaining(15);
     }
-  };
+  }; // End of executeMove function
 
-  // Trigger AI move when it's pigs turn
+  // Trigger AI move when it's pigs turn (single-player only)
   useEffect(() => {
-    if (currentPlayer === 'pigs' && gameStatus === 'playing' && !isAiThinking && aiInstance) {
+    if (!isMultiplayerGame() && currentPlayer === 'pigs' && gameStatus === 'playing' && !isAiThinking && aiInstance) {
       const aiDelay = setTimeout(() => {
         makeAiMove();
       }, 500); // Small delay before AI starts thinking
@@ -1184,16 +1235,35 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   const handleDragStart = (e, row, col) => {
     const piece = board[row][col];
     
-    // Allow dragging bird pieces during AI thinking (for premoves)
-    if (isAiThinking && piece && piece.team === 'birds') {
+    // Allow dragging for premoves in single-player during AI thinking
+    if (!isMultiplayerGame() && isAiThinking && piece && piece.team === 'birds') {
       setDraggedPiece({ row, col, piece });
       setSelectedSquare([row, col]);
       setPossibleMoves(calculatePossibleMoves(row, col));
       return;
     }
     
-    // Normal drag logic - only allow dragging current player's pieces
-    if (!piece || piece.team !== currentPlayer) {
+    // Normal drag logic - check if it's valid to drag this piece
+    let canDrag = false;
+    if (isMultiplayerGame()) {
+      // In multiplayer, check if it's my turn and my piece
+      const myColor = getOpponentInfo().playerColor;
+      const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
+                       (myColor === 'black' && currentPlayer === 'pigs');
+      
+      if (isMyTurn && piece) {
+        if (myColor === 'white') {
+          canDrag = piece.team === 'birds';
+        } else {
+          canDrag = piece.team === 'pigs';
+        }
+      }
+    } else {
+      // Single player - only allow dragging current player's pieces
+      canDrag = piece && piece.team === currentPlayer;
+    }
+    
+    if (!canDrag) {
       e.preventDefault();
       return;
     }
@@ -1227,8 +1297,8 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
 
     const piece = board[fromRow][fromCol];
     
-    // Handle premoves during AI thinking
-    if (isAiThinking && piece && piece.team === 'birds') {
+    // Handle premoves during AI thinking (single-player only)
+    if (!isMultiplayerGame() && isAiThinking && piece && piece.team === 'birds') {
       const moveValidation = aiInstance.isValidMoveWithSpecialRules(
         board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
       );
@@ -1254,8 +1324,27 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       return;
     }
     
-    // Normal move logic
-    if (piece && piece.team === currentPlayer) {
+    // Normal move logic - check if it's valid to make this move
+    let canMove = false;
+    if (isMultiplayerGame()) {
+      // In multiplayer, check if it's my turn and my piece
+      const myColor = getOpponentInfo().playerColor;
+      const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
+                       (myColor === 'black' && currentPlayer === 'pigs');
+      
+      if (isMyTurn && piece) {
+        if (myColor === 'white') {
+          canMove = piece.team === 'birds';
+        } else {
+          canMove = piece.team === 'pigs';
+        }
+      }
+    } else {
+      // Single player logic
+      canMove = piece && piece.team === currentPlayer;
+    }
+    
+    if (canMove && aiInstance) {
       // Check for special moves
       const moveValidation = aiInstance.isValidMoveWithSpecialRules(
         board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
@@ -1283,11 +1372,173 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     }
   };
 
+  // Function to handle game end events (from opponent or system)
+  const handleGameEnd = (result, reason = '') => {
+    console.log('[ChessBoardPage] Handling game end:', { result, reason });
+    
+    // Map result to our game status and result
+    switch (result) {
+      case 'win':
+        setGameStatus('checkmate');
+        setGameResult('win');
+        break;
+      case 'loss':
+        setGameStatus('checkmate');
+        setGameResult('loss');
+        break;
+      case 'draw':
+        setGameStatus('stalemate');
+        setGameResult('draw');
+        break;
+      case 'resignation':
+        setGameStatus('resignation');
+        setGameResult(result.includes('opponent') ? 'win' : 'loss');
+        break;
+      default:
+        setGameStatus('abandoned');
+        setGameResult('draw');
+    }
+    
+    // Show game end modal after a brief delay
+    setTimeout(() => {
+      setShowGameEndModal(true);
+    }, 500);
+    
+    console.log(`[ChessBoardPage] Game ended: ${result} - ${reason}`);
+  };
+
+  // Function to apply opponent move in multiplayer
+  const applyOpponentMove = (moveData) => {
+    console.log('[ChessBoardPage] Applying opponent move:', moveData);
+    
+    if (!aiInstance) {
+      console.error('[ChessBoardPage] No AI instance to validate opponent move');
+      return;
+    }
+
+    // Extract move information
+    const { from, to, piece, specialMove } = moveData.move;
+    const fromRow = from[0], fromCol = from[1];
+    const toRow = to[0], toCol = to[1];
+
+    // Create a new board with the opponent's move
+    const newBoard = board.map(row => [...row]);
+    
+    // Apply the move (similar to how we handle our own moves)
+    const movingPiece = newBoard[fromRow][fromCol];
+    if (!movingPiece) {
+      console.error('[ChessBoardPage] No piece at opponent move origin:', from);
+      return;
+    }
+
+    // Handle special moves
+    if (specialMove === 'castle') {
+      // Handle castling
+      const isKingSide = toCol > fromCol;
+      const rookFromCol = isKingSide ? 7 : 0;
+      const rookToCol = isKingSide ? 5 : 3;
+      
+      // Move rook
+      newBoard[fromRow][rookToCol] = { ...newBoard[fromRow][rookFromCol], moved: true };
+      newBoard[fromRow][rookFromCol] = null;
+    } else if (specialMove === 'enPassant') {
+      // Handle en passant - remove captured pawn
+      const captureRow = movingPiece.team === 'pigs' ? toRow + 1 : toRow - 1; // pigs are opponent
+      newBoard[captureRow][toCol] = null;
+    }
+
+    // Make the main move
+    newBoard[toRow][toCol] = { ...movingPiece, moved: true };
+    newBoard[fromRow][fromCol] = null;
+
+    // Handle promotion if specified
+    if (specialMove === 'promotion' && moveData.move.promotionType) {
+      const size = movingPiece.piece.props.size;
+      newBoard[toRow][toCol] = {
+        type: moveData.move.promotionType,
+        team: movingPiece.team,
+        piece: getPromotedPiece(moveData.move.promotionType, movingPiece.team, size),
+        moved: true
+      };
+    }
+
+    // Update game state
+    setBoard(newBoard);
+    setSelectedSquare(null);
+    setPossibleMoves([]);
+    
+    // Switch turns - opponent just moved, now it's our turn
+    // In multiplayer, both players use team perspective (birds vs pigs)
+    // If opponent was pigs, now it's birds turn (me), and vice versa
+    const opponentTeam = movingPiece.team; // The team that just moved
+    const myTurn = opponentTeam === 'birds' ? 'pigs' : 'birds'; // Switch to the other team
+    console.log(`[ChessBoardPage] Opponent (${opponentTeam}) moved, switching to my turn (${myTurn})`);
+    setCurrentPlayer(myTurn);
+    
+    // Update move history with proper format
+    const moveRecord = {
+      from: [fromRow, fromCol],
+      to: [toRow, toCol],
+      piece: piece,
+      team: movingPiece.team,
+      actor: movingPiece.team === 'birds' ? 'player' : 'enemy',
+      captured: moveData.move.captured || null,
+      fromPosition: getPositionName(fromRow, fromCol),
+      toPosition: getPositionName(toRow, toCol),
+      special: specialMove
+    };
+    setMoveHistory(prev => [...prev, moveRecord]);
+    setLastMove(moveRecord);
+
+    console.log('[ChessBoardPage] Opponent move applied successfully');
+    
+    // Check for winning conditions after opponent's move
+    checkWinCondition(newBoard);
+  };
+
+  // Function to check win conditions
+  const checkWinCondition = (boardState) => {
+    // Check if either king is captured
+    let birdsKing = null;
+    let pigsKing = null;
+    
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const piece = boardState[row][col];
+        if (piece && piece.type === 'king') {
+          if (piece.team === 'birds') {
+            birdsKing = piece;
+          } else if (piece.team === 'pigs') {
+            pigsKing = piece;
+          }
+        }
+      }
+    }
+    
+    // Determine winner based on which king was captured
+    let winner = null;
+    if (!birdsKing) {
+      winner = 'pigs';
+    } else if (!pigsKing) {
+      winner = 'birds';
+    }
+    
+    if (winner) {
+      console.log('[ChessBoardPage] Game won by team:', winner);
+      setGameStatus('checkmate');
+      
+      // Single player logic
+      const playerWon = winner === 'birds';
+      setGameResult(playerWon ? 'win' : 'loss');
+      setTimeout(() => setShowGameEndModal(true), 500);
+    }
+  };
+
   const handleSquareClick = (row, col) => {
     if (gameStatus !== 'playing') return;
 
-    // Allow premoves whenever AI is thinking (regardless of whose "turn" it is)
-    if (isAiThinking) {
+    // Allow premoves whenever AI is thinking (single-player only)
+    if (!isMultiplayerGame() && isAiThinking) {
       // Handle premove logic
       if (selectedSquare) {
         const [fromRow, fromCol] = selectedSquare;
@@ -1354,6 +1605,24 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       return;
     }
 
+    // Normal move logic
+    if (isMultiplayerGame()) {
+      // In multiplayer, only allow moves when it's my turn
+      const myColor = getOpponentInfo().playerColor;
+      const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
+                       (myColor === 'black' && currentPlayer === 'pigs');
+      
+      if (!isMyTurn) {
+        console.log(`🚫 [Multiplayer] Not my turn (currentPlayer: ${currentPlayer}, myColor: ${myColor})`);
+        return; // Wait for opponent's move
+      }
+    } else {
+      // In single-player, only allow moves when it's player's turn (not AI's turn)
+      if (currentPlayer !== 'birds') {
+        return; // It's the AI's turn
+      }
+    }
+
     // Normal move logic (when it's player's turn)
     if (selectedSquare) {
       const [fromRow, fromCol] = selectedSquare;
@@ -1366,7 +1635,23 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
       }
 
       const piece = board[fromRow][fromCol];
-      if (piece && piece.team === currentPlayer) {
+      
+      // Check if player can move this piece
+      let canMove = false;
+      if (isMultiplayerGame()) {
+        // In multiplayer, check if it's my piece based on my color
+        const myColor = getOpponentInfo().playerColor;
+        if (myColor === 'white') {
+          canMove = piece && piece.team === 'birds'; // White plays birds
+        } else {
+          canMove = piece && piece.team === 'pigs'; // Black plays pigs (from board perspective)
+        }
+      } else {
+        // Single player logic - only move birds
+        canMove = piece && piece.team === currentPlayer;
+      }
+      
+      if (canMove && aiInstance) {
         // Check for special moves
         const moveValidation = aiInstance.isValidMoveWithSpecialRules(
           board, fromRow, fromCol, row, col, lastMove, { positionHistory, fiftyMoveCounter }
@@ -1394,9 +1679,23 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           setPossibleMoves([]);
         } else {
           console.log(`❌ Invalid move: ${piece.type} from ${fromRow},${fromCol} to ${row},${col}`);
-          // Select new piece if it belongs to current player
+          // Select new piece if valid selection
           const newPiece = board[row][col];
-          if (newPiece && newPiece.team === currentPlayer) {
+          
+          // Check if new piece can be selected
+          let canSelect = false;
+          if (isMultiplayerGame()) {
+            const myColor = getOpponentInfo().playerColor;
+            if (myColor === 'white') {
+              canSelect = newPiece && newPiece.team === 'birds';
+            } else {
+              canSelect = newPiece && newPiece.team === 'pigs';
+            }
+          } else {
+            canSelect = newPiece && newPiece.team === currentPlayer;
+          }
+          
+          if (canSelect) {
             setSelectedSquare([row, col]);
             setPossibleMoves(calculatePossibleMoves(row, col));
           } else {
@@ -1406,9 +1705,21 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
         }
       }
     } else {
-      // Select piece if it belongs to current player
+      // Select piece if valid selection
       const piece = board[row][col];
-      if (piece && piece.team === currentPlayer) {
+      let canSelect = false;
+      if (isMultiplayerGame()) {
+        const myColor = getOpponentInfo().playerColor;
+        if (myColor === 'white') {
+          canSelect = piece && piece.team === 'birds';
+        } else {
+          canSelect = piece && piece.team === 'pigs';
+        }
+      } else {
+        canSelect = piece && piece.team === currentPlayer;
+      }
+      
+      if (canSelect) {
         setSelectedSquare([row, col]);
         setPossibleMoves(calculatePossibleMoves(row, col));
       }
@@ -1416,10 +1727,12 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
   };
 
   const getSquareColor = (row, col) => {
+    // Map render coords to board coords for all state checks
+    const { row: bRow, col: bCol } = toBoardCoords(row, col);
     const isLight = (row + col) % 2 === 0;
-    const isSelected = selectedSquare && selectedSquare[0] === row && selectedSquare[1] === col;
-    const isPossibleMove = possibleMoves.some(([moveRow, moveCol]) => moveRow === row && moveCol === col);
-    const isCapture = isPossibleMove && board[row][col] !== null;
+    const isSelected = selectedSquare && selectedSquare[0] === bRow && selectedSquare[1] === bCol;
+    const isPossibleMove = possibleMoves.some(([moveRow, moveCol]) => moveRow === bRow && moveCol === bCol);
+    const isCapture = isPossibleMove && board[bRow]?.[bCol] !== null;
     const isDraggedOver = draggedPiece && isPossibleMove;
     
     // Check if this square is part of a premove
@@ -1557,8 +1870,18 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
           </button>
           
           <div className="text-center">
-            <h1 className="text-lg sm:text-xl lg:text-2xl font-bold">{levelData?.name || 'Chess Battle'}</h1>
-            <p className="text-xs sm:text-sm text-slate-400">{levelData?.terrain || 'Battlefield'}</p>
+            <h1 className="text-lg sm:text-xl lg:text-2xl font-bold">
+              {isMultiplayerGame() ? 
+                `vs ${getOpponentInfo().name}` : 
+                (levelData?.name || 'Chess Battle')
+              }
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-400">
+              {isMultiplayerGame() ? 
+                `${getOpponentInfo().gameMode === 'competitive' ? 'Ranked' : 'Casual'} Match • You play as ${getOpponentInfo().playerColor}` :
+                (levelData?.terrain || 'Battlefield')
+              }
+            </p>
           </div>
           
           <div className="flex items-center gap-2 sm:gap-3">
@@ -1617,39 +1940,82 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
                         w-full h-full min-w-[40px] min-h-[40px]
                         ${getSquareColor(rowIndex, colIndex)}
                       `}
-                      onClick={() => handleSquareClick(rowIndex, colIndex)}
+                      onClick={() => {
+                        const { row: br, col: bc } = toBoardCoords(rowIndex, colIndex);
+                        handleSquareClick(br, bc);
+                      }}
                       onDragOver={handleDragOver}
-                      onDrop={(e) => handleDrop(e, rowIndex, colIndex)}
+                      onDrop={(e) => {
+                        const { row: br, col: bc } = toBoardCoords(rowIndex, colIndex);
+                        handleDrop(e, br, bc);
+                      }}
                     >
-                      {board[rowIndex] && board[rowIndex][colIndex] && (
-                        <div 
-                          className="transition-transform duration-200 hover:scale-110 w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
-                          draggable={board[rowIndex][colIndex].team === currentPlayer || (isAiThinking && board[rowIndex][colIndex].team === 'birds')}
-                          onDragStart={(e) => handleDragStart(e, rowIndex, colIndex)}
-                          onDragEnd={handleDragEnd}
-                        >
-                          {board[rowIndex][colIndex].piece}
-                        </div>
-                      )}
+                      {(() => {
+                        const { row: br, col: bc } = toBoardCoords(rowIndex, colIndex);
+                        const cell = board[br]?.[bc];
+                        if (!cell) return null;
+                        
+                        // Determine if piece is draggable
+                        let draggable = false;
+                        if (isMultiplayerGame()) {
+                          const myColor = getOpponentInfo().playerColor;
+                          const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
+                                           (myColor === 'black' && currentPlayer === 'pigs');
+                          if (isMyTurn) {
+                            if (myColor === 'white') {
+                              draggable = cell.team === 'birds';
+                            } else {
+                              draggable = cell.team === 'pigs';
+                            }
+                          }
+                        } else {
+                          // Single player logic
+                          draggable = cell.team === currentPlayer || (!isMultiplayerGame() && isAiThinking && cell.team === 'birds');
+                        }
+                        return (
+                          <div 
+                            className="transition-transform duration-200 hover:scale-110 w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
+                            draggable={draggable}
+                            onDragStart={(e) => handleDragStart(e, br, bc)}
+                            onDragEnd={handleDragEnd}
+                          >
+                            {getVisualPiece(cell)}
+                          </div>
+                        );
+                      })()}
                       
                       {/* Castling indicator */}
-                      {(!board[rowIndex] || !board[rowIndex][colIndex]) && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
-                       selectedSquare && board[selectedSquare[0]] && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
-                       selectedSquare[1] === 4 && selectedSquare[0] === rowIndex && (colIndex === 2 || colIndex === 6) && (
+                      {(() => {
+                        const { row: br, col: bc } = toBoardCoords(rowIndex, colIndex);
+                        const empty = !board[br]?.[bc];
+                        const canMoveHere = possibleMoves.some(move => move[0] === br && move[1] === bc);
+                        const isKingSelected = selectedSquare && board[selectedSquare[0]] && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king';
+                        const isCastleSpot = isKingSelected && selectedSquare[1] === 4 && selectedSquare[0] === br && (bc === 2 || bc === 6);
+                        if (empty && canMoveHere && isCastleSpot) {
+                          return (
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
                           <div className="text-2xl animate-bounce">🏰</div>
                           <div className="text-xs font-bold text-white bg-purple-600 px-1 rounded mt-1">
-                            {colIndex === 6 ? 'O-O' : 'O-O-O'}
+                            {bc === 6 ? 'O-O' : 'O-O-O'}
                           </div>
                         </div>
-                      )}
+                          );
+                        }
+                        return null;
+                      })()}
                       
                       {/* Regular move indicator */}
-                      {(!board[rowIndex] || !board[rowIndex][colIndex]) && possibleMoves.some(move => move[0] === rowIndex && move[1] === colIndex) && 
-                       !(selectedSquare && board[selectedSquare[0]] && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king' && 
-                         selectedSquare[1] === 4 && selectedSquare[0] === rowIndex && (colIndex === 2 || colIndex === 6)) && (
-                        <div className="w-4 h-4 bg-green-400 rounded-full opacity-80"></div>
-                      )}
+                      {(() => {
+                        const { row: br, col: bc } = toBoardCoords(rowIndex, colIndex);
+                        const empty = !board[br]?.[bc];
+                        const canMoveHere = possibleMoves.some(move => move[0] === br && move[1] === bc);
+                        const isKingSelected = selectedSquare && board[selectedSquare[0]] && board[selectedSquare[0]][selectedSquare[1]]?.type === 'king';
+                        const isCastleSpot = isKingSelected && selectedSquare[1] === 4 && selectedSquare[0] === br && (bc === 2 || bc === 6);
+                        if (empty && canMoveHere && !isCastleSpot) {
+                          return <div className="w-4 h-4 bg-green-400 rounded-full opacity-80"></div>;
+                        }
+                        return null;
+                      })()}
                     </div>
                   ))
                 )}
@@ -1672,11 +2038,37 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
               <div className="flex items-center gap-3">
                 {currentPlayer === 'birds' ? <RedBird size={32} /> : <KingPig size={32} />}
                 <span className="capitalize font-semibold text-base sm:text-lg">
-                  {currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'}
-                  {currentPlayer === 'pigs' && isAiThinking && (
+                  {isMultiplayerGame() ? (
+                    // In multiplayer, show whose turn it is more clearly
+                    (() => {
+                      const myColor = getOpponentInfo().playerColor;
+                      const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
+                                       (myColor === 'black' && currentPlayer === 'pigs');
+                      if (isMyTurn) {
+                        return `Your Turn (${myColor === 'white' ? 'Birds' : 'Pigs'})`;
+                      } else {
+                        return `${getOpponentInfo().name}'s Turn`;
+                      }
+                    })()
+                  ) : (
+                    // In single-player, show team names
+                    currentPlayer === 'birds' ? 'Angry Birds' : 'Green Pigs'
+                  )}
+                  {currentPlayer === 'pigs' && isAiThinking && !isMultiplayerGame() && (
                     <span className="text-sm text-slate-400 ml-2">(AI Thinking...)</span>
                   )}
-                  {premove && (
+                  {isMultiplayerGame() && (
+                    (() => {
+                      const myColor = getOpponentInfo().playerColor;
+                      const isMyTurn = (myColor === 'white' && currentPlayer === 'birds') || 
+                                       (myColor === 'black' && currentPlayer === 'pigs');
+                      if (!isMyTurn) {
+                        return <span className="text-sm text-slate-400 ml-2">(Waiting for opponent...)</span>;
+                      }
+                      return null;
+                    })()
+                  )}
+                  {premove && !isMultiplayerGame() && (
                     <span className="text-sm text-blue-400 ml-2">(Premove Set)</span>
                   )}
                 </span>

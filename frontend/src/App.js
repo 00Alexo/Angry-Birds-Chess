@@ -19,6 +19,7 @@ function AppContent() {
   const [currentScreen, setCurrentScreen] = useState('menu');
   const [selectedDifficulty, setSelectedDifficulty] = useState(null);
   const [selectedLevel, setSelectedLevel] = useState(null);
+  const [multiplayerMatchData, setMultiplayerMatchData] = useState(null);
   const [notification, setNotification] = useState({ show: false, message: '', type: 'info' });
   const [authError, setAuthError] = useState('');
   const [authIsLoading, setAuthIsLoading] = useState(false);
@@ -123,6 +124,16 @@ function AppContent() {
   const handleMultiPlayer = () => {
     setCurrentScreen('multiplayer');
     window.history.pushState(null, null, '/multiplayer');
+  };
+
+  const handleMultiplayerGame = (matchData) => {
+    console.log('[App] Starting multiplayer game with match data:', matchData);
+    
+    // Store the match data and switch to chess screen
+    setMultiplayerMatchData(matchData);
+    setSelectedLevel(matchData); // Use matchData as level data
+    setCurrentScreen('chess');
+    window.history.pushState(null, null, `/multiplayer/game/${matchData.matchId}`);
   };
 
   const handleSelectDifficulty = async (difficulty) => {
@@ -273,6 +284,7 @@ function AppContent() {
         return (
           <MultiplayerPage 
             onBack={handleBackToMenu}
+            onStartGame={handleMultiplayerGame}
             userName={user?.username}
             playerInventory={playerInventory}
           />
@@ -280,7 +292,21 @@ function AppContent() {
       case 'chess':
         return (
           <ChessBoardPage 
-            onBack={selectedDifficulty ? handleBackFromDifficulty : handleBackToCampaign}
+            onBack={() => {
+              if (selectedLevel?.isMultiplayer) {
+                // For multiplayer games, go back to multiplayer page
+                setCurrentScreen('multiplayer');
+                setSelectedLevel(null);
+                setMultiplayerMatchData(null);
+                window.history.pushState(null, null, '/multiplayer');
+              } else if (selectedDifficulty) {
+                // For difficulty-based games, go back to main menu
+                handleBackFromDifficulty();
+              } else {
+                // For campaign games, go back to campaign
+                handleBackToCampaign();
+              }
+            }}
             onNextLevel={handleNextLevel}
             levelData={selectedLevel}
             playerInventory={playerInventory}
