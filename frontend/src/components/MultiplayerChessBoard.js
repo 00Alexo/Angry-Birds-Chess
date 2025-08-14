@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { IoFlag, IoVolumeHigh, IoVolumeOff } from 'react-icons/io5';
 import multiplayerSocket from '../services/multiplayerSocket';
+import soundService from '../services/soundService';
 import { useAuth } from '../contexts/AuthContext';
+import LiveChat from './LiveChat';
 
 // Import all the chess pieces
 import { 
@@ -29,10 +31,21 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
   const [myTimer, setMyTimer] = useState(60); // MY timer - only counts when it's my turn
   const [gameEnded, setGameEnded] = useState(false);
   const [eloOutcomes, setEloOutcomes] = useState(null); // Pre-calculated Elo changes for all outcomes
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 1024); // Track mobile state
   
   // Premove system
   const [premove, setPremove] = useState(null); // Stores premove data
   const [premoveHighlight, setPremoveHighlight] = useState(null); // Visual highlight for premove
+
+  // Handle window resize for responsive chat
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 1024);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Calculate Elo outcomes for all possible results
   const calculateEloOutcomes = (myRating, opponentRating) => {
@@ -101,6 +114,11 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
       setCurrentPlayer('white'); // White always starts
       initializeBoard();
       setupMultiplayerListeners();
+      
+      // Play game start sound
+      setTimeout(() => {
+        soundService.playGameStart();
+      }, 1000); // Delay to let everything load
       
       // Calculate Elo outcomes for this match
       if (matchData.gameMode === 'competitive' && matchData.yourRating && matchData.opponentRating) {
@@ -176,6 +194,13 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
     const interval = setInterval(() => {
       setMyTimer(prev => {
         const newTime = prev - 1;
+        
+        // Play low time warning sounds
+        if (newTime === 10) {
+          soundService.playLowTime();
+        } else if (newTime <= 5 && newTime > 0) {
+          soundService.playTick();
+        }
         
         if (newTime <= 0) {
           console.log('⏰ [MultiplayerChess] MY TIMER EXPIRED! I lose!');
@@ -343,6 +368,15 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
         matchId: data.matchId,
         ratingData: data.ratingData || null
       });
+      
+      // Play game end sound
+      setTimeout(() => {
+        if (result === 'draw') {
+          soundService.playGameEnd('draw');
+        } else {
+          soundService.playGameEnd('win_or_lose');
+        }
+      }, 500); // Delay to let UI update first
     });
 
     // Listen for timeout events (when opponent times out)
@@ -478,6 +512,18 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
     setTimeout(() => {
       console.log(`🔍 [MultiplayerChess] Turn verification - currentPlayer should now be: ${correctMyColor}`);
     }, 100);
+
+    // Play sound for opponent move
+    setTimeout(() => {
+      const soundData = {
+        isCapture: capturedPiece !== null,
+        isCastling: special === 'castle' || special === 'castleKingside' || special === 'castleQueenside',
+        isPromotion: special === 'promotion',
+        isCheck: false, // Will be updated below if needed
+        isCheckmate: false // Will be updated below if needed
+      };
+      soundService.playMoveSound(soundData);
+    }, 150); // Small delay to ensure board is rendered
     
     // Analyze opponent's move for classification
     let opponentAnalysis = null;
@@ -825,6 +871,16 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
     setMoveHistory(prev => [...prev, moveRecord]);
     setLastMove(moveRecord);
     
+    // Play sound for my move
+    const soundData = {
+      isCapture: capturedPiece !== null,
+      isCastling: special === 'castleKingside' || special === 'castleQueenside',
+      isPromotion: special === 'promotion',
+      isCheck: false, // Will be updated when we add check detection
+      isCheckmate: false // Will be updated when we add checkmate detection
+    };
+    soundService.playMoveSound(soundData);
+    
     // Send move to opponent
     sendMoveToOpponent(moveRecord);
     
@@ -1141,7 +1197,14 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
             
             <div className="flex gap-1 sm:gap-2">
               <button
-                onClick={() => setSoundEnabled(!soundEnabled)}
+                onClick={() => {
+                  const newSoundState = !soundEnabled;
+                  setSoundEnabled(newSoundState);
+                  soundService.setEnabled(newSoundState);
+                  if (newSoundState) {
+                    soundService.test(); // Play test sound when enabling
+                  }
+                }}
                 className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
                 title={soundEnabled ? "Mute Sound" : "Enable Sound"}
               >
@@ -1182,75 +1245,125 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
           {/* Chess Board */}
           {renderBoard()}
 
-          {/* Game Info Panel */}
-          <div className="w-full lg:w-80 xl:w-96 space-y-3 sm:space-y-4">
-            {/* Current Turn */}
-            <div className="bg-slate-800 rounded-xl p-4 sm:p-5">
-              <h3 className="text-lg sm:text-xl font-bold mb-3">Current Turn</h3>
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg transition-all ${
-                  currentPlayer === myColor ? 'bg-blue-600 ring-4 ring-blue-400/30' : 'bg-gray-600'
-                }`}>
-                  {user?.username[0].toUpperCase()}
-                </div>
-                <div>
-                  <div className="font-semibold">{user?.username}</div>
-                  <div className="text-sm text-slate-400">
-                    Playing as {myColor === 'white' ? 'Birds 🐦' : 'Pigs 🐷'}
-                  </div>
-                  {currentPlayer === myColor && (
-                    <div className="text-blue-400 font-bold text-sm">● YOUR TURN</div>
-                  )}
-                </div>
-              </div>
-              
-              <div className="mt-3 pt-3 border-t border-slate-600">
+          {/* Right Panel - Game Info + Chat */}
+          <div className="w-full lg:w-80 xl:w-96 flex flex-col gap-3 lg:gap-4">
+            {/* Game Info Panel */}
+            <div className="space-y-3 sm:space-y-4">
+              {/* Current Turn */}
+              <div className="bg-slate-800 rounded-xl p-4 sm:p-5">
+                <h3 className="text-lg sm:text-xl font-bold mb-3">Current Turn</h3>
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
-                    currentPlayer !== myColor ? 'bg-red-600 ring-4 ring-red-400/30' : 'bg-gray-600'
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg transition-all ${
+                    currentPlayer === myColor ? 'bg-blue-600 ring-4 ring-blue-400/30' : 'bg-gray-600'
                   }`}>
-                    {matchData.opponent.username[0].toUpperCase()}
+                    {user?.username[0].toUpperCase()}
                   </div>
                   <div>
-                    <div className="font-semibold">{matchData.opponent.username}</div>
+                    <div className="font-semibold">{user?.username}</div>
                     <div className="text-sm text-slate-400">
-                      Playing as {myColor === 'white' ? 'Pigs 🐷' : 'Birds 🐦'}
+                      Playing as {myColor === 'white' ? 'Birds 🐦' : 'Pigs 🐷'}
                     </div>
-                    {currentPlayer !== myColor && (
-                      <div className="text-red-400 font-bold text-sm">● OPPONENT'S TURN</div>
+                    {currentPlayer === myColor && (
+                      <div className="text-blue-400 font-bold text-sm">● YOUR TURN</div>
                     )}
                   </div>
+                </div>
+                
+                <div className="mt-3 pt-3 border-t border-slate-600">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
+                      currentPlayer !== myColor ? 'bg-red-600 ring-4 ring-red-400/30' : 'bg-gray-600'
+                    }`}>
+                      {matchData.opponent.username[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="font-semibold">{matchData.opponent.username}</div>
+                      <div className="text-sm text-slate-400">
+                        Playing as {myColor === 'white' ? 'Pigs 🐷' : 'Birds 🐦'}
+                      </div>
+                      {currentPlayer !== myColor && (
+                        <div className="text-red-400 font-bold text-sm">● OPPONENT'S TURN</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Premove Display */}
+              {premove && currentPlayer !== myColor && (
+                <div className="bg-blue-900/30 border border-blue-600/30 rounded-xl p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-blue-400 font-bold text-sm">📝 Premove Set</div>
+                      <div className="text-blue-200 text-xs mt-1">
+                        {String.fromCharCode(97 + premove.fromCol)}{8 - premove.fromRow}→{String.fromCharCode(97 + premove.toCol)}{8 - premove.toRow}
+                        {premove.specialMove && ` (${premove.specialMove})`}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setPremove(null);
+                        setPremoveHighlight(null);
+                        setSelectedSquare(null);
+                        setPossibleMoves([]);
+                      }}
+                      className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs rounded border border-red-500/30 transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Game Status */}
+              <div className="bg-slate-800 rounded-xl p-4 sm:p-5">
+                <h3 className="text-lg font-bold mb-3">Game Status</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Moves played:</span>
+                    <span className="text-white">{moveHistory.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Game state:</span>
+                    <span className={`capitalize ${
+                      gameStatus === 'active' ? 'text-green-400' :
+                      gameStatus === 'check' ? 'text-yellow-400' :
+                      gameStatus === 'checkmate' ? 'text-red-400' :
+                      'text-slate-400'
+                    }`}>
+                      {gameStatus}
+                    </span>
+                  </div>
+                  {gameStatus === 'check' && (
+                    <div className="text-center mt-2 p-2 bg-yellow-600/20 rounded-lg">
+                      <div className="text-yellow-400 font-bold">⚠️ CHECK!</div>
+                      <div className="text-xs text-yellow-200 mt-1">King is under attack!</div>
+                    </div>
+                  )}
+                  {gameStatus === 'checkmate' && (
+                    <div className="text-center mt-2 p-2 bg-red-600/20 rounded-lg">
+                      <div className="text-red-400 font-bold text-xl">CHECKMATE!</div>
+                      <div className="text-xs text-red-200 mt-1">Game Over</div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Premove Display */}
-            {premove && currentPlayer !== myColor && (
-              <div className="bg-blue-900/30 border border-blue-600/30 rounded-xl p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-blue-400 font-bold text-sm">📝 Premove Set</div>
-                    <div className="text-blue-200 text-xs mt-1">
-                      {String.fromCharCode(97 + premove.fromCol)}{8 - premove.fromRow}→{String.fromCharCode(97 + premove.toCol)}{8 - premove.toRow}
-                      {premove.specialMove && ` (${premove.specialMove})`}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setPremove(null);
-                      setPremoveHighlight(null);
-                      setSelectedSquare(null);
-                      setPossibleMoves([]);
-                    }}
-                    className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs rounded border border-red-500/30 transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
+            {/* Live Chat - Desktop sidebar */}
+            {!isMobile && (
+              <div className="flex-1">
+                <LiveChat 
+                  matchId={matchData?.matchId}
+                  opponentUsername={matchData?.opponent?.username}
+                  isCompact={false}
+                  isCollapsible={true}
+                  position="right"
+                />
               </div>
             )}
 
-            {/* Move History */}
+            {/* Move History - Below chat on desktop, or separate on mobile */}
             {moveHistory.length > 0 && (
               <div className="bg-slate-800 rounded-xl p-4 sm:p-5">
                 <h3 className="text-lg font-bold mb-3">Recent Moves</h3>
@@ -1286,42 +1399,19 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
                 </div>
               </div>
             )}
-
-            {/* Game Status */}
-            <div className="bg-slate-800 rounded-xl p-4 sm:p-5">
-              <h3 className="text-lg font-bold mb-3">Game Status</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Moves played:</span>
-                  <span className="text-white">{moveHistory.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Game state:</span>
-                  <span className={`capitalize ${
-                    gameStatus === 'active' ? 'text-green-400' :
-                    gameStatus === 'check' ? 'text-yellow-400' :
-                    gameStatus === 'checkmate' ? 'text-red-400' :
-                    'text-slate-400'
-                  }`}>
-                    {gameStatus}
-                  </span>
-                </div>
-                {gameStatus === 'check' && (
-                  <div className="text-center mt-2 p-2 bg-yellow-600/20 rounded-lg">
-                    <div className="text-yellow-400 font-bold">⚠️ CHECK!</div>
-                    <div className="text-xs text-yellow-200 mt-1">King is under attack!</div>
-                  </div>
-                )}
-                {gameStatus === 'checkmate' && (
-                  <div className="text-center mt-2 p-2 bg-red-600/20 rounded-lg">
-                    <div className="text-red-400 font-bold text-xl">CHECKMATE!</div>
-                    <div className="text-xs text-red-200 mt-1">Game Over</div>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         </div>
+
+        {/* Live Chat - Mobile overlay */}
+        {isMobile && (
+          <LiveChat 
+            matchId={matchData?.matchId}
+            opponentUsername={matchData?.opponent?.username}
+            isCompact={true}
+            isCollapsible={false}
+            position="bottom"
+          />
+        )}
       </div>
 
       {/* Modern Game End Modal */}

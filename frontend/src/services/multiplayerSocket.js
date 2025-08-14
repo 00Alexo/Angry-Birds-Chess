@@ -328,6 +328,147 @@ class MultiplayerSocket {
     };
   }
 
+  // Chat functionality
+  sendChatMessage(messageData) {
+    console.log('[MultiplayerSocket] Sending chat message:', messageData);
+    if (!this.socket || !this.connected) {
+      console.error('[MultiplayerSocket] Cannot send chat message - not connected');
+      return false;
+    }
+    
+    if (!messageData?.matchId || !messageData?.message || !messageData?.sender) {
+      console.error('[MultiplayerSocket] Invalid chat message data - missing required fields');
+      return false;
+    }
+    
+    try {
+      this.socket.emit('multiplayer:chat-message', messageData);
+      console.log('[MultiplayerSocket] Chat message sent successfully');
+      return true;
+    } catch (error) {
+      console.error('[MultiplayerSocket] Error sending chat message:', error);
+      return false;
+    }
+  }
+
+  sendTypingIndicator(data) {
+    console.log('[MultiplayerSocket] Sending typing indicator:', data);
+    if (!this.socket || !this.connected) {
+      console.error('[MultiplayerSocket] Cannot send typing indicator - not connected');
+      return false;
+    }
+    
+    try {
+      this.socket.emit('multiplayer:typing', data);
+      return true;
+    } catch (error) {
+      console.error('[MultiplayerSocket] Error sending typing indicator:', error);
+      return false;
+    }
+  }
+
+  onChatMessage(cb) {
+    console.log('[MultiplayerSocket] Setting up chat message listener');
+    if (!this.socket) return () => {};
+    const handler = (messageData) => {
+      console.log('[MultiplayerSocket] Received chat message:', messageData);
+      cb(messageData);
+    };
+    this.socket.on('multiplayer:chat-message', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing chat message listener');
+      this.socket.off('multiplayer:chat-message', handler);
+    };
+  }
+
+  onTypingIndicator(cb) {
+    console.log('[MultiplayerSocket] Setting up typing indicator listener');
+    if (!this.socket) return () => {};
+    const handler = (data) => {
+      console.log('[MultiplayerSocket] Received typing indicator:', data);
+      cb(data);
+    };
+    this.socket.on('multiplayer:typing', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing typing indicator listener');
+      this.socket.off('multiplayer:typing', handler);
+    };
+  }
+
+  // Lobby chat functionality
+  sendLobbyChatMessage(messageData) {
+    console.log('[MultiplayerSocket] Sending lobby chat message:', messageData);
+    if (!this.socket || !this.connected) {
+      console.error('[MultiplayerSocket] Cannot send lobby chat message - not connected');
+      return false;
+    }
+    
+    if (!messageData?.message || !messageData?.sender) {
+      console.error('[MultiplayerSocket] Invalid lobby chat message data - missing required fields');
+      return false;
+    }
+    
+    try {
+      this.socket.emit('multiplayer:lobby-chat', messageData);
+      console.log('[MultiplayerSocket] Lobby chat message sent successfully');
+      return true;
+    } catch (error) {
+      console.error('[MultiplayerSocket] Error sending lobby chat message:', error);
+      return false;
+    }
+  }
+
+  onLobbyChatMessage(cb) {
+    console.log('[MultiplayerSocket] Setting up lobby chat message listener');
+    if (!this.socket) return () => {};
+    const handler = (messageData) => {
+      console.log('[MultiplayerSocket] Received lobby chat message:', messageData);
+      cb(messageData);
+    };
+    this.socket.on('multiplayer:lobby-chat', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing lobby chat message listener');
+      this.socket.off('multiplayer:lobby-chat', handler);
+    };
+  }
+
+  onLobbyMessages(cb) {
+    console.log('[MultiplayerSocket] Setting up lobby messages listener');
+    if (!this.socket) return () => {};
+    const handler = (messages) => {
+      console.log('[MultiplayerSocket] Received lobby messages:', messages);
+      cb(messages);
+    };
+    this.socket.on('multiplayer:lobby-messages', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing lobby messages listener');
+      this.socket.off('multiplayer:lobby-messages', handler);
+    };
+  }
+
+  requestLobbyMessages() {
+    console.log('[MultiplayerSocket] Requesting recent lobby messages');
+    if (!this.socket || !this.connected) {
+      console.log('[MultiplayerSocket] Cannot request lobby messages - not connected');
+      return;
+    }
+    this.socket.emit('multiplayer:get-lobby-messages');
+  }
+
+  onLobbyMessages(cb) {
+    console.log('[MultiplayerSocket] Setting up lobby messages listener');
+    if (!this.socket) return () => {};
+    const handler = (messages) => {
+      console.log('[MultiplayerSocket] Received lobby messages:', messages);
+      cb(messages);
+    };
+    this.socket.on('multiplayer:lobby-messages', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing lobby messages listener');
+      this.socket.off('multiplayer:lobby-messages', handler);
+    };
+  }
+
   setStatus(status) {
     if (!this.socket || !this.connected) return;
     this.socket.emit('multiplayer:status', { status });

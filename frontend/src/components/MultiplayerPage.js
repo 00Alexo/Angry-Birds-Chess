@@ -3,10 +3,12 @@ import {
   IoArrowBack, IoPeople, IoGameController, IoTime, IoTrophy, 
   IoSearch, IoClose, IoPlay, IoStop, IoSettings,
   IoCheckmark, IoEllipsisHorizontal, IoFlash, IoShield,
-  IoStar, IoSkull, IoPerson, IoGlobe, IoEyeOff
+  IoStar, IoSkull, IoPerson, IoGlobe, IoEyeOff, IoChatbubbleEllipses
 } from 'react-icons/io5';
 import multiplayerSocket from '../services/multiplayerSocket';
 import ratingService from '../services/ratingService';
+import LiveChat from './LiveChat';
+import LobbyChat from './LobbyChat';
 
 const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventory }) => {
   const [activeTab, setActiveTab] = useState('queue');
@@ -19,6 +21,10 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
   const [matchCountdown, setMatchCountdown] = useState(0);
   const [isMatchStarting, setIsMatchStarting] = useState(false);
   const [userRating, setUserRating] = useState(null); // Add state for user rating
+  const [leaderboardData, setLeaderboardData] = useState([]);
+  const [rankingStats, setRankingStats] = useState([]);
+  const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
+  const [isLoadingRanking, setIsLoadingRanking] = useState(false);
 
   const [onlinePlayers, setOnlinePlayers] = useState([]);
 
@@ -215,6 +221,49 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [userId, refreshUserRating]);
+
+  // Load leaderboard data
+  const loadLeaderboardData = useCallback(async () => {
+    if (isLoadingLeaderboard) return;
+    
+    setIsLoadingLeaderboard(true);
+    try {
+      const data = await ratingService.getLeaderboard(50, 0);
+      setLeaderboardData(data.leaderboard);
+      console.log('[MultiplayerPage] Loaded leaderboard data:', data);
+    } catch (error) {
+      console.error('[MultiplayerPage] Error loading leaderboard:', error);
+      setLeaderboardData([]);
+    } finally {
+      setIsLoadingLeaderboard(false);
+    }
+  }, [isLoadingLeaderboard]);
+
+  // Load ranking statistics
+  const loadRankingStats = useCallback(async () => {
+    if (isLoadingRanking) return;
+    
+    setIsLoadingRanking(true);
+    try {
+      const data = await ratingService.getRankingStats();
+      setRankingStats(data.tierStats);
+      console.log('[MultiplayerPage] Loaded ranking stats:', data);
+    } catch (error) {
+      console.error('[MultiplayerPage] Error loading ranking stats:', error);
+      setRankingStats([]);
+    } finally {
+      setIsLoadingRanking(false);
+    }
+  }, [isLoadingRanking]);
+
+  // Load data when tabs are accessed
+  useEffect(() => {
+    if (activeTab === 'leaderboard' && leaderboardData.length === 0) {
+      loadLeaderboardData();
+    } else if (activeTab === 'ranks' && rankingStats.length === 0) {
+      loadRankingStats();
+    }
+  }, [activeTab, leaderboardData.length, rankingStats.length, loadLeaderboardData, loadRankingStats]);
 
   // Multiplayer socket presence lifecycle
   useEffect(() => {
@@ -584,12 +633,6 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
                 </div>
                 
                 <div className="flex items-center space-x-2">
-                  {player.status === 'online' && !player.isPlaying && (
-                    <button className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm flex items-center space-x-1 transition-colors">
-                      <IoGameController size={16} />
-                      <span>Challenge</span>
-                    </button>
-                  )}
                   {player.isPlaying && (
                     <div className="bg-yellow-900/30 text-yellow-400 px-3 py-2 rounded-lg text-sm flex items-center space-x-1">
                       <IoGameController size={16} />
@@ -787,6 +830,227 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
     </div>
   );
 
+  // Render Lobby Chat Tab
+  const renderLobbyChatTab = () => (
+    <div className="space-y-6">
+      <LobbyChat />
+    </div>
+  );
+
+  // Render Leaderboard Tab
+  const renderLeaderboardTab = () => (
+    <div className="space-y-6">
+      <div className="bg-black/60 backdrop-blur-md rounded-xl p-6 border border-white/30">
+        <h3 className="text-xl font-bold text-white mb-4 flex items-center">
+          <IoTrophy className="mr-2 text-yellow-400" />
+          Global Leaderboard
+        </h3>
+        
+        {isLoadingLeaderboard ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+            <span className="ml-2 text-white/70">Loading leaderboard...</span>
+          </div>
+        ) : leaderboardData.length === 0 ? (
+          <div className="text-center py-8 text-white/70">
+            <p>No leaderboard data available.</p>
+            <p className="text-sm mt-2">Be the first to play competitive matches!</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {leaderboardData.map((player, index) => (
+              <div 
+                key={player.rank || index} 
+                className={`p-4 rounded-lg border transition-all hover:bg-white/5 ${
+                  player.rank <= 3 
+                    ? 'bg-gradient-to-r from-yellow-900/30 to-yellow-800/20 border-yellow-500/30' 
+                    : 'bg-black/40 border-white/20'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    <div className={`flex items-center justify-center w-10 h-10 rounded-full font-bold text-lg ${
+                      player.rank === 1 ? 'bg-yellow-500 text-black' :
+                      player.rank === 2 ? 'bg-gray-300 text-black' :
+                      player.rank === 3 ? 'bg-orange-600 text-white' :
+                      'bg-slate-600 text-white'
+                    }`}>
+                      #{player.rank}
+                    </div>
+                    
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-white text-lg">{player.username}</span>
+                        <span className="text-xl">{
+                          player.rank === 1 ? '👑' :
+                          player.rank === 2 ? '🥈' :
+                          player.rank === 3 ? '🥉' :
+                          player.winRate >= 80 ? '🏆' :
+                          player.winRate >= 70 ? '⭐' :
+                          player.winRate >= 60 ? '🎯' :
+                          '🎲'
+                        }</span>
+                        {player.username === userName && (
+                          <span className="bg-blue-500 text-white px-2 py-1 rounded text-xs font-bold">
+                            YOU
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-4 mt-1 text-sm text-white/70">
+                        <span>Rating: <span className="text-yellow-400 font-bold">{player.rating}</span></span>
+                        <span>Games: <span className="text-blue-400 font-medium">{player.gamesPlayed}</span></span>
+                        <span>Win Rate: <span className="text-green-400 font-medium">{player.winRate}%</span></span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="text-right">
+                    <div className={`text-2xl font-bold ${
+                      player.rank <= 3 ? 'text-yellow-400' : 'text-white'
+                    }`}>
+                      {player.rating}
+                    </div>
+                    <div className="text-xs text-white/50">ELO Rating</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Refresh Button */}
+        <div className="mt-4 text-center">
+          <button
+            onClick={loadLeaderboardData}
+            disabled={isLoadingLeaderboard}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg transition-colors text-sm"
+          >
+            {isLoadingLeaderboard ? 'Loading...' : 'Refresh Leaderboard'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Render Hall of Fame Tab (Ranks)
+  const renderHallOfFameTab = () => (
+    <div className="space-y-6">
+      <div className="bg-black/60 backdrop-blur-md rounded-xl p-6 border border-white/30">
+        <h3 className="text-xl font-bold text-white mb-4 flex items-center">
+          <IoStar className="mr-2 text-purple-400" />
+          Hall of Fame - Ranking System
+        </h3>
+        
+        {isLoadingRanking ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+            <span className="ml-2 text-white/70">Loading ranking data...</span>
+          </div>
+        ) : rankingStats.length === 0 ? (
+          <div className="text-center py-8 text-white/70">
+            <p>No ranking data available.</p>
+            <button
+              onClick={loadRankingStats}
+              className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm"
+            >
+              Load Rankings
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {rankingStats.map((rank, index) => {
+              const colorMap = {
+                'Legendary Bird Master': { bg: 'from-yellow-400 to-yellow-600', text: 'text-yellow-400' },
+                'Grandmaster Falcon': { bg: 'from-purple-400 to-purple-600', text: 'text-purple-400' },
+                'Master Eagle': { bg: 'from-blue-400 to-blue-600', text: 'text-blue-400' },
+                'Expert Cardinal': { bg: 'from-red-400 to-red-600', text: 'text-red-400' },
+                'Advanced Robin': { bg: 'from-green-400 to-green-600', text: 'text-green-400' },
+                'Skilled Sparrow': { bg: 'from-orange-400 to-orange-600', text: 'text-orange-400' },
+                'Novice Chick': { bg: 'from-yellow-200 to-yellow-400', text: 'text-yellow-200' },
+                'Beginner Egg': { bg: 'from-gray-400 to-gray-600', text: 'text-gray-400' }
+              };
+              
+              const colors = colorMap[rank.name] || { bg: 'from-gray-400 to-gray-600', text: 'text-gray-400' };
+              const isUserRank = userRating && userRating.current >= rank.minRating && userRating.current <= (rank.maxRating === 3000 ? 999999 : rank.maxRating);
+              
+              return (
+                <div 
+                  key={rank.name || index}
+                  className={`relative overflow-hidden rounded-xl border-2 p-6 ${
+                    isUserRank
+                      ? 'border-white/50 ring-2 ring-white/30'
+                      : 'border-white/20'
+                  }`}
+                >
+                  <div className={`absolute inset-0 bg-gradient-to-br ${colors.bg} opacity-10`}></div>
+                  
+                  <div className="relative">
+                    <div className="flex items-center space-x-3 mb-3">
+                      <span className="text-3xl">{rank.icon}</span>
+                      <div>
+                        <h4 className={`text-lg font-bold ${colors.text}`}>
+                          {rank.name}
+                        </h4>
+                        <p className="text-sm text-white/60">
+                          {rank.name.includes('Legendary') ? 'The ultimate chess masters' :
+                           rank.name.includes('Grandmaster') ? 'Elite strategic minds' :
+                           rank.name.includes('Master') ? 'Advanced tactical players' :
+                           rank.name.includes('Expert') ? 'Skilled chess fighters' :
+                           rank.name.includes('Advanced') ? 'Developing strategists' :
+                           rank.name.includes('Skilled') ? 'Learning the ropes' :
+                           rank.name.includes('Novice') ? 'New to the battlefield' :
+                           'Just hatched'}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-white/70">Rating Range:</span>
+                        <span className={`font-bold ${colors.text}`}>
+                          {rank.minRating} - {rank.maxRating === 3000 ? '∞' : rank.maxRating}
+                        </span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-white/70">Active Players:</span>
+                        <span className="font-bold text-white">{rank.players ? rank.players.toLocaleString() : '0'}</span>
+                      </div>
+                      
+                      {isUserRank && (
+                        <div className="mt-3 p-2 bg-white/10 rounded-lg">
+                          <div className="flex items-center justify-center space-x-2">
+                            <span className="text-white font-bold">⭐ YOUR CURRENT RANK ⭐</span>
+                          </div>
+                          {userRating && rank.maxRating !== 3000 && (
+                            <div className="text-center text-sm text-white/80 mt-1">
+                              You are {rank.maxRating - userRating.current} points away from the next rank!
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Refresh Button */}
+        <div className="mt-4 text-center">
+          <button
+            onClick={loadRankingStats}
+            disabled={isLoadingRanking}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-800 text-white rounded-lg transition-colors text-sm"
+          >
+            {isLoadingRanking ? 'Loading...' : 'Refresh Rankings'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-400 via-green-300 to-blue-500 p-4">
       {/* Match countdown overlay */}
@@ -882,7 +1146,9 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
         {[
           { id: 'queue', label: 'Find Match', icon: IoPlay },
           { id: 'players', label: 'Online Players', icon: IoPeople },
-          { id: 'history', label: 'Match History', icon: IoTime }
+          { id: 'chat', label: 'Lobby Chat', icon: IoChatbubbleEllipses },
+          { id: 'leaderboard', label: 'Leaderboard', icon: IoTrophy },
+          { id: 'ranks', label: 'Hall of Fame', icon: IoStar }
         ].map(tab => (
           <button
             key={tab.id}
@@ -894,7 +1160,7 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
             }`}
           >
             <tab.icon size={20} />
-            <span className="font-medium">{tab.label}</span>
+            <span className="font-medium hidden sm:inline">{tab.label}</span>
           </button>
         ))}
       </div>
@@ -903,7 +1169,9 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
       <div className="max-w-6xl mx-auto">
         {activeTab === 'queue' && renderQueueTab()}
         {activeTab === 'players' && renderOnlinePlayersTab()}
-        {activeTab === 'history' && renderMatchHistoryTab()}
+        {activeTab === 'chat' && renderLobbyChatTab()}
+        {activeTab === 'leaderboard' && renderLeaderboardTab()}
+        {activeTab === 'ranks' && renderHallOfFameTab()}
       </div>
     </div>
   );

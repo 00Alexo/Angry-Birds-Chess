@@ -54,6 +54,11 @@ const matchmakingQueues = {
 };
 // Store active matches
 const activeMatches = new Map(); // matchId -> { player1, player2, gameState, startTime }
+// Store chat messages (in-memory for now, could move to database later)
+const chatMessages = {
+  lobby: [], // Lobby chat messages
+  matches: new Map() // matchId -> array of messages
+};
 
 io.on('connection', (socket) => {
   try {
@@ -601,6 +606,167 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Chat functionality
+  // Lobby chat message
+  socket.on('multiplayer:lobby-chat', (messageData) => {
+    try {
+      console.log('[Chat] Lobby message received:', messageData);
+      
+      const { message, sender, timestamp } = messageData;
+      if (!message || !sender) {
+        console.error('[Chat] Invalid lobby message data');
+        return;
+      }
+      
+      // Store message with server timestamp
+      const chatMessage = {
+        id: `lobby_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        message: message.trim().substring(0, 200), // Limit message length
+        sender,
+        timestamp: timestamp || new Date().toISOString(),
+        serverTimestamp: new Date().toISOString()
+      };
+      
+      // Add to lobby messages (keep last 100 messages)
+      chatMessages.lobby.push(chatMessage);
+      if (chatMessages.lobby.length > 100) {
+        chatMessages.lobby = chatMessages.lobby.slice(-100);
+      }
+      
+      console.log(`[Chat] Broadcasting lobby message to all players: ${sender.username}: ${message}`);
+      
+      // Broadcast to all connected players in multiplayer
+      io.emit('multiplayer:lobby-chat', chatMessage);
+      
+    } catch (err) {
+      console.error('❌ [Chat] Error handling lobby chat:', err);
+    }
+  });
+
+  // Get recent lobby messages
+  socket.on('multiplayer:get-lobby-messages', () => {
+    try {
+      console.log('[Chat] Sending recent lobby messages to', socket.id);
+      
+      // Send last 50 messages to the requesting client
+      const recentMessages = chatMessages.lobby.slice(-50);
+      socket.emit('multiplayer:lobby-messages', recentMessages);
+      
+    } catch (err) {
+      console.error('❌ [Chat] Error sending lobby messages:', err);
+    }
+  });
+
+  // Match chat message
+  socket.on('multiplayer:chat-message', (messageData) => {
+    try {
+      console.log('[Chat] Match message received:', messageData);
+      
+      const { matchId, message, sender, timestamp } = messageData;
+      if (!matchId || !message || !sender) {
+        console.error('[Chat] Invalid match message data');
+        return;
+      }
+      
+      // Verify the match exists
+      const match = activeMatches.get(matchId);
+      if (!match) {
+        console.warn(`[Chat] Match ${matchId} not found for chat message`);
+        return;
+      }
+      
+      // Verify sender is part of this match
+      const isValidSender = match.player1.userId === sender.userId || 
+                           match.player2.userId === sender.userId;
+      
+      if (!isValidSender) {
+        console.warn(`[Chat] Invalid sender for match ${matchId}: ${sender.userId}`);
+        return;
+      }
+      
+      // Store message with server timestamp
+      const chatMessage = {
+        id: `match_${matchId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        matchId,
+        message: message.trim().substring(0, 200), // Limit message length
+        sender,
+        timestamp: timestamp || new Date().toISOString(),
+        serverTimestamp: new Date().toISOString()
+      };
+      
+      // Initialize match chat if doesn't exist
+      if (!chatMessages.matches.has(matchId)) {
+        chatMessages.matches.set(matchId, []);
+      }
+      
+      // Add to match messages (keep last 50 messages per match)
+      const matchMessages = chatMessages.matches.get(matchId);
+      matchMessages.push(chatMessage);
+      if (matchMessages.length > 50) {
+        chatMessages.matches.set(matchId, matchMessages.slice(-50));
+      }
+      
+      console.log(`[Chat] Broadcasting match message to players in ${matchId}: ${sender.username}: ${message}`);
+      
+      // Send to both players in the match
+      io.to(match.player1.socketId).emit('multiplayer:chat-message', chatMessage);
+      io.to(match.player2.socketId).emit('multiplayer:chat-message', chatMessage);
+      
+    } catch (err) {
+      console.error('❌ [Chat] Error handling match chat:', err);
+    }
+  });
+
+  // Typing indicator for match chat
+  socket.on('multiplayer:typing', (data) => {
+    try {
+      console.log('[Chat] Typing indicator received:', data);
+      
+      const { matchId, sender, isTyping } = data;
+      if (!matchId || !sender) {
+        console.error('[Chat] Invalid typing indicator data');
+        return;
+      }
+      
+      // Verify the match exists
+      const match = activeMatches.get(matchId);
+      if (!match) {
+        console.warn(`[Chat] Match ${matchId} not found for typing indicator`);
+        return;
+      }
+      
+      // Verify sender is part of this match
+      const isValidSender = match.player1.userId === sender.userId || 
+                           match.player2.userId === sender.userId;
+      
+      if (!isValidSender) {
+        console.warn(`[Chat] Invalid sender for typing in match ${matchId}: ${sender.userId}`);
+        return;
+      }
+      
+      // Determine opponent's socket ID
+      let opponentSocketId;
+      if (match.player1.userId === sender.userId) {
+        opponentSocketId = match.player2.socketId;
+      } else {
+        opponentSocketId = match.player1.socketId;
+      }
+      
+      console.log(`[Chat] Sending typing indicator to opponent ${opponentSocketId}: ${isTyping}`);
+      
+      // Send typing indicator to opponent only
+      io.to(opponentSocketId).emit('multiplayer:typing', {
+        matchId,
+        sender,
+        isTyping,
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (err) {
+      console.error('❌ [Chat] Error handling typing indicator:', err);
+    }
+  });
+
   // Handle natural multiplayer game endings (checkmate, draw, stalemate)
   const handleMultiplayerNaturalGameEnd = async (matchId, result, winnerColor, reason) => {
     try {
@@ -810,6 +976,15 @@ io.on('connection', (socket) => {
       
       // Clean up match
       activeMatches.delete(matchId);
+      
+      // Clean up match chat messages after some time (optional - keep for history)
+      setTimeout(() => {
+        if (chatMessages.matches.has(matchId)) {
+          chatMessages.matches.delete(matchId);
+          console.log(`🧹 [Chat] Cleaned up chat messages for match ${matchId}`);
+        }
+      }, 60000); // Keep messages for 1 minute after match ends
+      
       console.log(`🧹 [Multiplayer] Match ${matchId} cleaned up after natural game end`);
       
     } catch (err) {
@@ -1025,6 +1200,15 @@ io.on('connection', (socket) => {
       
       // Clean up match
       activeMatches.delete(matchId);
+      
+      // Clean up match chat messages after some time (optional - keep for history)
+      setTimeout(() => {
+        if (chatMessages.matches.has(matchId)) {
+          chatMessages.matches.delete(matchId);
+          console.log(`🧹 [Chat] Cleaned up chat messages for match ${matchId}`);
+        }
+      }, 60000); // Keep messages for 1 minute after match ends
+      
       console.log(`🧹 [Multiplayer] Match ${matchId} cleaned up`);
       
     } catch (err) {
@@ -1312,13 +1496,19 @@ app.get('/api/socket/status', (req, res) => {
   res.json({
     activeGames: activeGames.size,
     connectedSockets: io.sockets.sockets.size,
-  status: 'Simple WebSocket service running',
-  onlinePlayers: onlinePlayers.size,
+    status: 'Simple WebSocket service running',
+    onlinePlayers: onlinePlayers.size,
     queueStats: {
       competitive: matchmakingQueues.competitive.size,
       unranked: matchmakingQueues.unranked.size
     },
-    activeMatches: activeMatches.size
+    activeMatches: activeMatches.size,
+    chatStats: {
+      lobbyMessages: chatMessages.lobby.length,
+      activeMatchChats: chatMessages.matches.size,
+      totalMatchMessages: Array.from(chatMessages.matches.values())
+        .reduce((total, messages) => total + messages.length, 0)
+    }
   });
 });
 

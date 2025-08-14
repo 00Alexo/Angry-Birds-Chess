@@ -1189,6 +1189,52 @@ const getGameHistory = async (req, res) => {
   }
 };
 
+// Get game history for a specific user by username
+const getUserGameHistory = async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { limit = 50, offset = 0, gameType, result } = req.query;
+
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required.' });
+    }
+
+    // Find user by username (case-insensitive)
+    const targetUser = await User.findOne({ username: { $regex: `^${username}$`, $options: 'i' } });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    let gameHistory = targetUser.gameHistory;
+
+    // Filter by game type if specified
+    if (gameType) {
+      gameHistory = gameHistory.filter(game => game.gameType === gameType);
+    }
+
+    // Filter by result if specified
+    if (result) {
+      gameHistory = gameHistory.filter(game => game.result === result);
+    }
+
+    // Sort by creation date (newest first)
+    gameHistory = gameHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // Apply pagination
+    const paginatedHistory = gameHistory.slice(offset, offset + parseInt(limit));
+
+    return res.status(200).json({
+      message: 'Game history retrieved successfully',
+      gameHistory: paginatedHistory,
+      totalGames: gameHistory.length,
+      gameStats: targetUser.getGameStats()
+    });
+  } catch (error) {
+    console.error('Get user game history error:', error);
+    return res.status(500).json({ error: 'Internal server error occurred while retrieving game history.' });
+  }
+};
+
 // Reset progress
 const resetProgress = async (req, res) => {
   try {
@@ -1341,6 +1387,202 @@ const getRatingInfo = async (req, res) => {
   }
 };
 
+// Get leaderboard data
+const getLeaderboard = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = parseInt(req.query.skip) || 0;
+
+    // Get top players by rating
+    const topPlayers = await User.aggregate([
+      {
+        $match: {
+          'rating.current': { $gt: 1000 }, // Only include players with meaningful ratings
+          'rating.gamesPlayed': { $gt: 0 } // Must have played at least one game
+        }
+      },
+      {
+        $addFields: {
+          // Calculate wins, losses, draws from game history
+          multiplayerGames: {
+            $filter: {
+              input: '$gameHistory',
+              cond: { 
+                $and: [
+                  { $in: ['$$this.gameType', ['multiplayer', 'multiplayer_competitive']] },
+                  { $ne: ['$$this.result', 'in-progress'] }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          wins: {
+            $size: {
+              $filter: {
+                input: '$multiplayerGames',
+                cond: { $eq: ['$$this.result', 'win'] }
+              }
+            }
+          },
+          losses: {
+            $size: {
+              $filter: {
+                input: '$multiplayerGames',
+                cond: { $eq: ['$$this.result', 'loss'] }
+              }
+            }
+          },
+          draws: {
+            $size: {
+              $filter: {
+                input: '$multiplayerGames',
+                cond: { $eq: ['$$this.result', 'draw'] }
+              }
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          winRate: {
+            $multiply: [
+              {
+                $divide: ['$wins', { $max: ['$rating.gamesPlayed', 1] }]
+              },
+              100
+            ]
+          }
+        }
+      },
+      {
+        $sort: { 'rating.current': -1 }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      },
+      {
+        $project: {
+          username: 1,
+          'rating.current': 1,
+          'rating.peak': 1,
+          'rating.gamesPlayed': 1,
+          wins: 1,
+          losses: 1,
+          draws: 1,
+          winRate: 1,
+          createdAt: 1
+        }
+      }
+    ]);
+
+    // Add rank numbers
+    const leaderboard = topPlayers.map((player, index) => ({
+      rank: skip + index + 1,
+      username: player.username,
+      rating: player.rating.current,
+      peak: player.rating.peak,
+      gamesPlayed: player.rating.gamesPlayed,
+      wins: player.wins,
+      losses: player.losses,
+      draws: player.draws,
+      winRate: Math.round(player.winRate || 0),
+      memberSince: player.createdAt
+    }));
+
+    // Get user's rank if they're logged in
+    let userRank = null;
+    if (req.user && req.user.rating.gamesPlayed > 0) {
+      const userRating = req.user.rating.current;
+      const betterPlayers = await User.countDocuments({
+        'rating.current': { $gt: userRating },
+        'rating.gamesPlayed': { $gt: 0 }
+      });
+      userRank = {
+        rank: betterPlayers + 1,
+        rating: userRating,
+        gamesPlayed: req.user.rating.gamesPlayed,
+        wins: req.user.playerData.gamesWon || 0,
+        losses: req.user.playerData.gamesLost || 0,
+        draws: req.user.playerData.gamesDrawn || 0,
+        winRate: Math.round(((req.user.playerData.gamesWon || 0) / Math.max(req.user.rating.gamesPlayed, 1)) * 100)
+      };
+    }
+
+    return res.status(200).json({
+      message: 'Leaderboard retrieved successfully',
+      leaderboard,
+      userRank,
+      totalPlayers: await User.countDocuments({
+        'rating.gamesPlayed': { $gt: 0 }
+      })
+    });
+
+  } catch (error) {
+    console.error('Get leaderboard error:', error);
+    return res.status(500).json({ error: 'Internal server error occurred while getting leaderboard.' });
+  }
+};
+
+// Get ranking statistics for Hall of Fame
+const getRankingStats = async (req, res) => {
+  try {
+    // Define rank tiers
+    const rankTiers = [
+      { name: 'Legendary Bird Master', minRating: 2400, maxRating: 3000, icon: '👑' },
+      { name: 'Grandmaster Falcon', minRating: 2200, maxRating: 2399, icon: '🦅' },
+      { name: 'Master Eagle', minRating: 2000, maxRating: 2199, icon: '🦆' },
+      { name: 'Expert Cardinal', minRating: 1800, maxRating: 1999, icon: '🐦‍🔥' },
+      { name: 'Advanced Robin', minRating: 1600, maxRating: 1799, icon: '🐦' },
+      { name: 'Skilled Sparrow', minRating: 1400, maxRating: 1599, icon: '🐤' },
+      { name: 'Novice Chick', minRating: 1200, maxRating: 1399, icon: '🐣' },
+      { name: 'Beginner Egg', minRating: 0, maxRating: 1199, icon: '🥚' }
+    ];
+
+    // Get player counts for each tier
+    const tierStats = await Promise.all(
+      rankTiers.map(async (tier) => {
+        const playerCount = await User.countDocuments({
+          'rating.current': {
+            $gte: tier.minRating,
+            $lte: tier.maxRating === 3000 ? 999999 : tier.maxRating
+          },
+          'rating.gamesPlayed': { $gt: 0 }
+        });
+
+        return {
+          ...tier,
+          players: playerCount
+        };
+      })
+    );
+
+    // Get user's current rank tier if logged in
+    let userTier = null;
+    if (req.user && req.user.rating.gamesPlayed > 0) {
+      const userRating = req.user.rating.current;
+      userTier = rankTiers.find(tier => 
+        userRating >= tier.minRating && userRating <= (tier.maxRating === 3000 ? 999999 : tier.maxRating)
+      );
+    }
+
+    return res.status(200).json({
+      message: 'Ranking stats retrieved successfully',
+      tierStats,
+      userTier: userTier || null
+    });
+
+  } catch (error) {
+    console.error('Get ranking stats error:', error);
+    return res.status(500).json({ error: 'Internal server error occurred while getting ranking stats.' });
+  }
+};
+
 module.exports = {
   getPlayerData,
   updatePlayerData,
@@ -1356,7 +1598,10 @@ module.exports = {
   startGame,
   endGame,
   getGameHistory,
+  getUserGameHistory,
   markUnfinishedGamesAsLosses,
   getUnfinishedGamesCount,
-  getRatingInfo
+  getRatingInfo,
+  getLeaderboard,
+  getRankingStats
 };

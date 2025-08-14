@@ -230,6 +230,16 @@ class ApiService {
     return this.request(`/game/game-history?${params.toString()}`);
   }
 
+  async getUserGameHistory(username, limit = 50, offset = 0, gameType = null, result = null) {
+    const params = new URLSearchParams();
+    params.append('limit', limit);
+    params.append('offset', offset);
+    if (gameType) params.append('gameType', gameType);
+    if (result) params.append('result', result);
+
+    return this.request(`/game/game-history/${username}?${params.toString()}`);
+  }
+
   async markUnfinishedGamesAsLosses() {
     return this.request('/game/mark-unfinished-as-losses', {
       method: 'POST',

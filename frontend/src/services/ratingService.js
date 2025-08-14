@@ -28,6 +28,61 @@ class RatingService {
   }
 
   /**
+   * Get leaderboard data
+   * @param {number} limit - Number of players to fetch (default: 50)
+   * @param {number} skip - Number of players to skip (default: 0)
+   * @returns {Promise<Object>} Leaderboard data
+   */
+  async getLeaderboard(limit = 50, skip = 0) {
+    try {
+      const response = await apiService.request(`/game/leaderboard?limit=${limit}&skip=${skip}`, 'GET');
+      return {
+        leaderboard: response.leaderboard || [],
+        userRank: response.userRank || null,
+        totalPlayers: response.totalPlayers || 0
+      };
+    } catch (error) {
+      console.error('Error fetching leaderboard:', error);
+      // Return empty leaderboard if API fails
+      return {
+        leaderboard: [],
+        userRank: null,
+        totalPlayers: 0
+      };
+    }
+  }
+
+  /**
+   * Get ranking statistics for Hall of Fame
+   * @returns {Promise<Object>} Ranking statistics
+   */
+  async getRankingStats() {
+    try {
+      const response = await apiService.request('/game/ranking-stats', 'GET');
+      return {
+        tierStats: response.tierStats || [],
+        userTier: response.userTier || null
+      };
+    } catch (error) {
+      console.error('Error fetching ranking stats:', error);
+      // Return default ranking stats if API fails
+      return {
+        tierStats: [
+          { name: 'Legendary Bird Master', minRating: 2400, maxRating: 3000, icon: '👑', players: 0 },
+          { name: 'Grandmaster Falcon', minRating: 2200, maxRating: 2399, icon: '🦅', players: 0 },
+          { name: 'Master Eagle', minRating: 2000, maxRating: 2199, icon: '🦆', players: 0 },
+          { name: 'Expert Cardinal', minRating: 1800, maxRating: 1999, icon: '🐦‍🔥', players: 0 },
+          { name: 'Advanced Robin', minRating: 1600, maxRating: 1799, icon: '🐦', players: 0 },
+          { name: 'Skilled Sparrow', minRating: 1400, maxRating: 1599, icon: '🐤', players: 0 },
+          { name: 'Novice Chick', minRating: 1200, maxRating: 1399, icon: '🐣', players: 0 },
+          { name: 'Beginner Egg', minRating: 0, maxRating: 1199, icon: '🥚', players: 0 }
+        ],
+        userTier: null
+      };
+    }
+  }
+
+  /**
    * Get rank name based on rating
    * @param {number} rating - Player's rating
    * @returns {string} Rank name

@@ -11,11 +11,14 @@ router.use(auth);
 router.post('/start-game', gameController.startGame);
 router.post('/end-game', gameController.endGame);
 router.get('/game-history', gameController.getGameHistory);
+router.get('/game-history/:username', gameController.getUserGameHistory);
 router.post('/mark-unfinished-as-losses', gameController.markUnfinishedGamesAsLosses);
 router.get('/unfinished-games-count', gameController.getUnfinishedGamesCount);
 
 // Rating routes
 router.get('/rating-info', gameController.getRatingInfo);
+router.get('/leaderboard', gameController.getLeaderboard);
+router.get('/ranking-stats', gameController.getRankingStats);
 
 // Player data routes
 router.get('/player-data', gameController.getPlayerData);

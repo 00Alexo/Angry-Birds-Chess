@@ -60,18 +60,20 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
             } catch (error) {
               console.error('Failed to fetch user rating:', error);
             }
-            
-            // Fetch game history
-            try {
-              setHistoryLoading(true);
-              const historyData = await apiService.getGameHistory(historyLimit);
-              setGameHistory(historyData.gameHistory || []);
-            } catch (error) {
-              console.error('Failed to fetch game history:', error);
-              setGameHistory([]);
-            } finally {
-              setHistoryLoading(false);
-            }
+          }
+          
+          // Fetch game history (for both own profile and other profiles)
+          try {
+            setHistoryLoading(true);
+            const historyData = isOwnProfile 
+              ? await apiService.getGameHistory(historyLimit)
+              : await apiService.getUserGameHistory(userName, historyLimit);
+            setGameHistory(historyData.gameHistory || []);
+          } catch (error) {
+            console.error('Failed to fetch game history:', error);
+            setGameHistory([]);
+          } finally {
+            setHistoryLoading(false);
           }
         } else {
           setNotFound(true);
@@ -638,6 +640,14 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
                         <span className="block text-xs">Coins</span>
                         <span className="text-green-400">+{game.coinsEarned || 0}</span>
                       </div>
+                      {(game.gameType === 'multiplayer' || game.gameType === 'multiplayer_competitive' || game.gameType === 'vs-player') && game.ratingChange !== undefined && game.ratingChange !== null && (
+                        <div>
+                          <span className="block text-xs">ELO</span>
+                          <span className={`${game.ratingChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {game.ratingChange >= 0 ? '+' : ''}{game.ratingChange}
+                          </span>
+                        </div>
+                      )}
                       <div>
                         <span className="block text-xs">Date</span>
                         <span className="text-white">{new Date(game.createdAt).toLocaleDateString()}</span>
