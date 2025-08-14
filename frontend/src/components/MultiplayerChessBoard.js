@@ -28,6 +28,10 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
   const [gameEndData, setGameEndData] = useState(null); // For showing game end modal
   const [myTimer, setMyTimer] = useState(60); // MY timer - only counts when it's my turn
   const [gameEnded, setGameEnded] = useState(false);
+  
+  // Premove system
+  const [premove, setPremove] = useState(null); // Stores premove data
+  const [premoveHighlight, setPremoveHighlight] = useState(null); // Visual highlight for premove
 
   // Initialize board when component mounts
   useEffect(() => {
@@ -150,8 +154,36 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
     if (currentPlayer === myColor && !gameEnded && gameStatus === 'active') {
       console.log(`🔄 [MultiplayerChess] Resetting MY timer to 60s - my turn started`);
       setMyTimer(60);
+      
+      // Execute premove if one is set
+      if (premove) {
+        console.log('📝 [MultiplayerChess] ===== EXECUTING PREMOVE =====');
+        console.log('📝 [MultiplayerChess] Premove data:', premove);
+        
+        const { fromRow, fromCol, toRow, toCol, specialMove, promotionType } = premove;
+        
+        // Validate the premove is still legal
+        const myTeam = myColor === 'white' ? 'birds' : 'pigs';
+        const allTeamMoves = aiInstance.getAllPossibleMoves(board, myTeam, lastMove);
+        const isStillValid = allTeamMoves.some(move => 
+          move.fromRow === fromRow && move.fromCol === fromCol && 
+          move.toRow === toRow && move.toCol === toCol
+        );
+        
+        if (isStillValid) {
+          console.log('✅ [MultiplayerChess] Premove is still valid - executing');
+          // Execute the premove
+          makeMove(fromRow, fromCol, toRow, toCol, specialMove, promotionType);
+        } else {
+          console.log('❌ [MultiplayerChess] Premove no longer valid - cancelling');
+        }
+        
+        // Clear premove
+        setPremove(null);
+        setPremoveHighlight(null);
+      }
     }
-  }, [currentPlayer, myColor, gameEnded, gameStatus]);
+  }, [currentPlayer, myColor, gameEnded, gameStatus, premove, board, lastMove]);
 
   // Initialize chess board with pieces oriented correctly for each player
   const initializeBoard = () => {
@@ -480,18 +512,67 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
     console.log(`🖱️ [MultiplayerChess] Square clicked: [${row},${col}]`);
     console.log(`🖱️ [MultiplayerChess] Current player: ${currentPlayer}, My color: ${myColor}`);
     
-    // Only allow moves when it's my turn
+    const piece = board[row][col];
+    const myTeam = myColor === 'white' ? 'birds' : 'pigs';
+    
+    // Handle premoves when it's NOT my turn
     if (currentPlayer !== myColor) {
-      console.log(`🚫 [MultiplayerChess] Not my turn (current: ${currentPlayer}, mine: ${myColor})`);
+      console.log(`� [MultiplayerChess] Not my turn - handling premove logic`);
+      
+      // If clicking on my own piece, select it for premove
+      if (piece && piece.team === myTeam) {
+        setSelectedSquare([row, col]);
+        // Get all possible moves for this team
+        const allTeamMoves = aiInstance.getAllPossibleMoves(board, myTeam, lastMove);
+        const pieceMoves = allTeamMoves.filter(move => move.fromRow === row && move.fromCol === col);
+        const moves = pieceMoves.map(move => ({ row: move.toRow, col: move.toCol }));
+        setPossibleMoves(moves);
+        console.log(`� [MultiplayerChess] Selected piece for premove: ${piece.type} at [${row},${col}]`);
+        return;
+      }
+      
+      // If I have a piece selected, try to make a premove
+      if (selectedSquare) {
+        const [fromRow, fromCol] = selectedSquare;
+        const selectedPiece = board[fromRow][fromCol];
+        
+        if (selectedPiece && selectedPiece.team === myTeam) {
+          // Check if this is a valid premove
+          const allTeamMoves = aiInstance.getAllPossibleMoves(board, myTeam, lastMove);
+          const pieceMoves = allTeamMoves.filter(move => move.fromRow === fromRow && move.fromCol === fromCol);
+          const isValidPremove = pieceMoves.some(move => move.toRow === row && move.toCol === col);
+          
+          if (isValidPremove) {
+            const moveDetails = pieceMoves.find(move => move.toRow === row && move.toCol === col);
+            
+            // Set premove
+            const premoveData = {
+              fromRow,
+              fromCol,
+              toRow: row,
+              toCol: col,
+              specialMove: moveDetails?.special,
+              promotionType: moveDetails?.special === 'promotion' ? 'queen' : null
+            };
+            
+            setPremove(premoveData);
+            setPremoveHighlight({ from: [fromRow, fromCol], to: [row, col] });
+            console.log('📝 [MultiplayerChess] Premove set:', premoveData);
+            
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+          } else {
+            console.log(`❌ [MultiplayerChess] Invalid premove to [${row},${col}]`);
+            setSelectedSquare(null);
+            setPossibleMoves([]);
+          }
+        }
+      }
       return;
     }
-    
-    const piece = board[row][col];
-    console.log(`🖱️ [MultiplayerChess] Piece at clicked square:`, piece);
-    
-    // Determine which team I control based on my color
-    const myTeam = myColor === 'white' ? 'birds' : 'pigs';
-    console.log(`🖱️ [MultiplayerChess] My team: ${myTeam}`);
+
+    // Regular move handling when it's my turn
+    console.log(`🎯 [MultiplayerChess] My turn - handling regular move`);
     
     // If clicking on my piece, select it
     if (piece && piece.team === myTeam) {
@@ -859,6 +940,10 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
                 const actualCol = shouldFlip ? 7 - col : col;
                 const piece = board[actualRow] && board[actualRow][actualCol];
                 
+                // Check if this square is part of a premove
+                const isPremoveFrom = premoveHighlight?.from && premoveHighlight.from[0] === actualRow && premoveHighlight.from[1] === actualCol;
+                const isPremoveTo = premoveHighlight?.to && premoveHighlight.to[0] === actualRow && premoveHighlight.to[1] === actualCol;
+                
                 return (
                   <div
                     key={`${row}-${col}`}
@@ -867,7 +952,9 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
                       transition-all duration-200 hover:shadow-lg
                       flex items-center justify-center relative
                       w-full h-full min-w-[40px] min-h-[40px]
-                      ${getSquareColor(actualRow, actualCol)}
+                      ${isPremoveFrom ? 'bg-blue-500/50 border-blue-300' : 
+                        isPremoveTo ? 'bg-blue-400/50 border-blue-200' : 
+                        getSquareColor(actualRow, actualCol)}
                     `}
                     onClick={() => handleSquareClick(actualRow, actualCol)}
                   >
@@ -1035,6 +1122,32 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
                 </div>
               </div>
             </div>
+
+            {/* Premove Display */}
+            {premove && currentPlayer !== myColor && (
+              <div className="bg-blue-900/30 border border-blue-600/30 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-blue-400 font-bold text-sm">📝 Premove Set</div>
+                    <div className="text-blue-200 text-xs mt-1">
+                      {String.fromCharCode(97 + premove.fromCol)}{8 - premove.fromRow}→{String.fromCharCode(97 + premove.toCol)}{8 - premove.toRow}
+                      {premove.specialMove && ` (${premove.specialMove})`}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPremove(null);
+                      setPremoveHighlight(null);
+                      setSelectedSquare(null);
+                      setPossibleMoves([]);
+                    }}
+                    className="px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs rounded border border-red-500/30 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Move History */}
             {moveHistory.length > 0 && (
