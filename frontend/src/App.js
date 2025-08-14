@@ -287,6 +287,7 @@ function AppContent() {
             onBack={handleBackToMenu}
             onStartGame={handleMultiplayerGame}
             userName={user?.username}
+            userId={user?.id || user?._id}
             playerInventory={playerInventory}
           />
         );
@@ -302,12 +303,6 @@ function AppContent() {
                 setCurrentScreen('multiplayer');
                 setSelectedLevel(null);
                 setMultiplayerMatchData(null);
-              }}
-              onBack={() => {
-                setCurrentScreen('multiplayer');
-                setSelectedLevel(null);
-                setMultiplayerMatchData(null);
-                window.history.pushState(null, null, '/multiplayer');
               }}
             />
           );

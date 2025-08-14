@@ -7,7 +7,7 @@ import {
 } from 'react-icons/io5';
 import multiplayerSocket from '../services/multiplayerSocket';
 
-const MultiplayerPage = ({ onBack, onStartGame, userName, playerInventory }) => {
+const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventory }) => {
   const [activeTab, setActiveTab] = useState('queue');
   const [searchQuery, setSearchQuery] = useState('');
   const [isQueuing, setIsQueuing] = useState(false);
@@ -142,14 +142,14 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, playerInventory }) => 
 
   // Multiplayer socket presence lifecycle
   useEffect(() => {
-    console.log('[MultiplayerPage] Setting up multiplayer socket for user:', userName);
+    console.log('[MultiplayerPage] Setting up multiplayer socket for user:', userName, 'userId:', userId);
     let unsubscribeOnlinePlayers = () => {};
     let unsubscribeQueueStats = () => {};
     let unsubscribeMatchFound = () => {};
     let queueStatsInterval;
     
     // Connect and announce presence
-    multiplayerSocket.connect({ username: userName }).then(() => {
+    multiplayerSocket.connect({ username: userName, userId: userId }).then(() => {
       console.log('[MultiplayerPage] Successfully connected to multiplayer socket');
       
       // Set up online players listener
@@ -200,14 +200,15 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, playerInventory }) => 
     });
 
     return () => {
-      console.log('[MultiplayerPage] Cleaning up multiplayer socket');
+      console.log('[MultiplayerPage] Cleaning up multiplayer socket listeners');
       if (queueStatsInterval) clearInterval(queueStatsInterval);
       unsubscribeOnlinePlayers();
       unsubscribeQueueStats();
       unsubscribeMatchFound();
-      multiplayerSocket.disconnect();
+      // DON'T disconnect the socket - it needs to persist for the game
+      console.log('[MultiplayerPage] Socket listeners cleaned up but connection preserved for game');
     };
-  }, [userName]);
+  }, [userName, userId]);
 
   // Helper functions
   const formatDuration = (milliseconds) => {

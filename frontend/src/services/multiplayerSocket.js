@@ -28,14 +28,18 @@ class MultiplayerSocket {
       const socketUrl = baseUrl.replace(/\/api$/, '');
       console.log('[MultiplayerSocket] Connecting to:', socketUrl);
       
-      // Use polling-only to avoid WS upgrade issues in dev environments
+      // Improved WebSocket configuration for better stability
       const opts = {
         path: '/socket.io',
-        transports: ['polling'],
-        upgrade: false,
+        transports: ['polling', 'websocket'], // Allow both transports
+        upgrade: true, // Allow upgrading to websocket
         reconnection: true,
-        reconnectionAttempts: 5,
-        timeout: 10000,
+        reconnectionAttempts: 10, // More attempts
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        maxReconnectionAttempts: 10,
+        timeout: 20000, // Longer timeout
+        forceNew: false,
         withCredentials: false,
       };
 
@@ -51,7 +55,8 @@ class MultiplayerSocket {
       });
 
       this.socket.on('connect', () => {
-        console.log('[MultiplayerSocket] Connected! Socket ID:', this.socket.id);
+        console.log('[MultiplayerSocket] ✅ Connected! Socket ID:', this.socket.id);
+        console.log('[MultiplayerSocket] Transport:', this.socket.io.engine.transport.name);
         this.connected = true;
         // Join multiplayer presence on connect
         console.log('[MultiplayerSocket] Emitting multiplayer:join with:', { username, userId, rating });
@@ -63,14 +68,34 @@ class MultiplayerSocket {
       });
 
       this.socket.on('connect_error', (err) => {
-        console.error('[MultiplayerSocket] Connection error:', err);
+        console.error('[MultiplayerSocket] ❌ Connection error:', err);
         this.connected = false;
         // With polling-only, connect_error indicates server unreachable
         reject(err);
       });
 
-      this.socket.on('disconnect', () => {
-        console.log('[MultiplayerSocket] Disconnected');
+      this.socket.on('disconnect', (reason) => {
+        console.log('[MultiplayerSocket] ⚠️  Disconnected. Reason:', reason);
+        this.connected = false;
+      });
+
+      this.socket.on('reconnect', (attemptNumber) => {
+        console.log('[MultiplayerSocket] 🔄 Reconnected after', attemptNumber, 'attempts');
+        this.connected = true;
+        // Re-announce presence after reconnection
+        this.socket.emit('multiplayer:join', { username, userId, rating });
+      });
+
+      this.socket.on('reconnect_attempt', (attemptNumber) => {
+        console.log('[MultiplayerSocket] 🔄 Reconnection attempt', attemptNumber);
+      });
+
+      this.socket.on('reconnect_error', (error) => {
+        console.error('[MultiplayerSocket] ❌ Reconnection error:', error);
+      });
+
+      this.socket.on('reconnect_failed', () => {
+        console.error('[MultiplayerSocket] ❌ Reconnection failed - giving up');
         this.connected = false;
       });
     });
@@ -180,26 +205,96 @@ class MultiplayerSocket {
     }
   }
 
+  // Resign from multiplayer game
+  resignGame(matchId) {
+    console.log('[MultiplayerSocket] ===== RESIGNING FROM GAME =====');
+    console.log('[MultiplayerSocket] Match ID:', matchId);
+    
+    if (!this.socket || !this.connected) {
+      console.error('[MultiplayerSocket] ❌ Cannot resign - not connected');
+      return false;
+    }
+    
+    if (!matchId) {
+      console.error('[MultiplayerSocket] ❌ No matchId provided for resignation');
+      return false;
+    }
+    
+    try {
+      this.socket.emit('multiplayer:resign', { matchId });
+      console.log('[MultiplayerSocket] ✅ Resignation sent to backend successfully');
+      return true;
+    } catch (error) {
+      console.error('[MultiplayerSocket] ❌ Error sending resignation:', error);
+      return false;
+    }
+  }
+
+  // Send natural game end (checkmate, draw, stalemate) to backend
+  endGame(matchId, result, winnerColor, reason) {
+    console.log('[MultiplayerSocket] ===== SENDING NATURAL GAME END =====');
+    console.log('[MultiplayerSocket] Match ID:', matchId);
+    console.log('[MultiplayerSocket] Result:', result);
+    console.log('[MultiplayerSocket] Winner color:', winnerColor);
+    console.log('[MultiplayerSocket] Reason:', reason);
+    
+    if (!this.socket || !this.connected) {
+      console.error('[MultiplayerSocket] ❌ Cannot send game end - not connected');
+      return false;
+    }
+    
+    if (!matchId || !result || !reason) {
+      console.error('[MultiplayerSocket] ❌ Invalid game end data - missing required fields');
+      return false;
+    }
+    
+    try {
+      this.socket.emit('multiplayer:game-ended', { 
+        matchId, 
+        result, 
+        winnerColor, 
+        reason 
+      });
+      console.log('[MultiplayerSocket] ✅ Natural game end sent to backend successfully');
+      return true;
+    } catch (error) {
+      console.error('[MultiplayerSocket] ❌ Error sending natural game end:', error);
+      return false;
+    }
+  }
+
   // Listen for opponent moves
   onOpponentMove(cb) {
     console.log('[MultiplayerSocket] ===== SETTING UP OPPONENT MOVE LISTENER =====');
     console.log('[MultiplayerSocket] Socket exists:', !!this.socket);
     console.log('[MultiplayerSocket] Socket connected:', this.connected);
+    console.log('[MultiplayerSocket] Socket ID:', this.socket?.id);
     
-    if (!this.socket) return () => {};
+    if (!this.socket) {
+      console.error('[MultiplayerSocket] ❌ No socket available for opponent move listener!');
+      return () => {};
+    }
+    
+    // Remove any existing listeners to prevent duplicates
+    this.socket.removeAllListeners('multiplayer:opponent-move');
     
     const handler = (moveData) => {
       console.log('[MultiplayerSocket] 🎯 ===== OPPONENT MOVE RECEIVED FROM BACKEND =====');
+      console.log('[MultiplayerSocket] Socket ID that received:', this.socket.id);
       console.log('[MultiplayerSocket] Raw move data from backend:', JSON.stringify(moveData, null, 2));
+      console.log('[MultiplayerSocket] Calling callback function...');
       cb(moveData);
+      console.log('[MultiplayerSocket] ✅ Callback function called successfully');
     };
     
     this.socket.on('multiplayer:opponent-move', handler);
-    console.log('[MultiplayerSocket] ✅ Opponent move listener registered');
+    console.log('[MultiplayerSocket] ✅ Opponent move listener registered successfully');
     
     return () => {
       console.log('[MultiplayerSocket] Removing opponent move listener');
-      this.socket.off('multiplayer:opponent-move', handler);
+      if (this.socket) {
+        this.socket.off('multiplayer:opponent-move', handler);
+      }
     };
   }
 
@@ -209,7 +304,7 @@ class MultiplayerSocket {
     if (!this.socket) return () => {};
     const handler = (data) => {
       console.log('[MultiplayerSocket] Game ended:', data);
-      cb(data.result, data.reason || '');
+      cb(data.result, data.reason || '', data);
     };
     this.socket.on('multiplayer:game-end', handler);
     return () => {

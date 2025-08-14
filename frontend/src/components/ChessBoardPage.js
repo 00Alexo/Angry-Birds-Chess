@@ -184,9 +184,9 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     switch (type) {
       case 'king': return <KingPig size={size} />;
       case 'queen': return <QueenPig size={size} />;
-      case 'bishop': return <CorporalPig size={size} />;
+      case 'bishop': return <ForemanPig size={size} />;
       case 'knight': return <NinjaPig size={size} />;
-      case 'rook': return <RegularPig size={size} />;
+      case 'rook': return <CorporalPig size={size} />;
       case 'pawn': return <RegularPig size={size} />;
       default: return <KingPig size={size} />;
     }
@@ -728,7 +728,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     backRank[4] = { type: 'king', team: myTeam, piece: teamName === 'birds' ? <RedBird size={mainSize} /> : <KingPig size={mainSize} />, moved: false };
     if (pieceConfig.queen) backRank[3] = { type: 'queen', team: myTeam, piece: <Stella size={mainSize} />, moved: false };
     const bishopPositions = [2, 5];
-    for (let i = 0; i < Math.min(pieceConfig.bishops || 0, 2); i++) backRank[bishopPositions[i]] = { type: 'bishop', team: myTeam, piece: teamName === 'birds' ? <WhiteBird size={mainSize} /> : <CorporalPig size={mainSize} />, moved: false };
+    for (let i = 0; i < Math.min(pieceConfig.bishops || 0, 2); i++) backRank[bishopPositions[i]] = { type: 'bishop', team: myTeam, piece: teamName === 'birds' ? <WhiteBird size={mainSize} /> : <ForemanPig size={mainSize} />, moved: false };
     const knightPositions = [1, 6];
     for (let i = 0; i < Math.min(pieceConfig.knights || 0, 2); i++) backRank[knightPositions[i]] = { type: 'knight', team: myTeam, piece: teamName === 'birds' ? <BlackBird size={mainSize} /> : <NinjaPig size={mainSize} />, moved: false };
     const rookPositions = [0, 7];
@@ -748,7 +748,7 @@ const ChessBoardPage = ({ onBack, onNextLevel, levelData, playerInventory, spend
     backRank[4] = { type: 'king', team: opponentTeam, piece: teamName === 'pigs' ? <KingPig size={mainSize} /> : <RedBird size={mainSize} />, moved: false };
     if (pieceConfig.queen) backRank[3] = { type: 'queen', team: opponentTeam, piece: teamName === 'pigs' ? <QueenPig size={mainSize} /> : <Stella size={mainSize} />, moved: false };
     const bishopPositions = [2, 5];
-    for (let i = 0; i < Math.min(pieceConfig.bishops || 0, 2); i++) backRank[bishopPositions[i]] = { type: 'bishop', team: opponentTeam, piece: teamName === 'pigs' ? <CorporalPig size={mainSize} /> : <WhiteBird size={mainSize} />, moved: false };
+    for (let i = 0; i < Math.min(pieceConfig.bishops || 0, 2); i++) backRank[bishopPositions[i]] = { type: 'bishop', team: opponentTeam, piece: teamName === 'pigs' ? <ForemanPig size={mainSize} /> : <WhiteBird size={mainSize} />, moved: false };
     const knightPositions = [1, 6];
     for (let i = 0; i < Math.min(pieceConfig.knights || 0, 2); i++) backRank[knightPositions[i]] = { type: 'knight', team: opponentTeam, piece: teamName === 'pigs' ? <NinjaPig size={mainSize} /> : <BlackBird size={mainSize} />, moved: false };
     const rookPositions = [0, 7];

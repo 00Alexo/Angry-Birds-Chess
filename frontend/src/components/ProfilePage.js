@@ -76,16 +76,29 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
     if (matchHistory.length === 0) return null;
     
     const byResult = { win: 0, loss: 0, draw: 0, 'in-progress': 0 };
-    const byType = { 'vs-ai': 0, campaign: 0, 'vs-player': 0 };
+    const byType = { 'vs-ai': 0, campaign: 0, 'vs-player': 0, 'multiplayer_competitive': 0, 'multiplayer_unranked': 0, 'multiplayer': 0 };
     const byEndReason = {}; // dynamic
     const difficultyWins = {}; // for vs-ai / campaign opponent field
     let fastestWin = null;
     let longestGame = null;
     let totalMoves = 0;
     let totalDuration = 0;
+    
+    console.log(`🔍 [ProfilePage] Loaded ${matchHistory.length} games:`, matchHistory);
+    
     matchHistory.forEach(g => {
       if (g.result && byResult[g.result] !== undefined) byResult[g.result]++;
-      if (g.gameType && byType[g.gameType] !== undefined) byType[g.gameType]++;
+      
+      // Handle game type categorization - group multiplayer variants
+      let gameTypeCategory = g.gameType;
+      if (g.gameType === 'multiplayer_competitive' || g.gameType === 'multiplayer_unranked' || g.gameType === 'multiplayer') {
+        // Track specific multiplayer types in byType but also count in vs-player for backwards compatibility
+        if (byType[g.gameType] !== undefined) byType[g.gameType]++;
+        byType['vs-player']++; // Also count as vs-player for existing analytics
+      } else if (byType[g.gameType] !== undefined) {
+        byType[g.gameType]++;
+      }
+      
       if (g.endReason) byEndReason[g.endReason] = (byEndReason[g.endReason] || 0) + 1;
       if (g.result === 'win') {
         const key = g.opponent || (g.gameType === 'campaign' ? `Level-${g.levelId}` : 'Unknown');
@@ -185,22 +198,62 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
     return displays[classification] || { color: 'text-gray-400', bg: 'bg-gray-900/30', icon: '', symbol: '' };
   };
 
+  // Filter moves to get human/player moves (for both single-player and multiplayer)
+  const getHumanMoves = (moves) => {
+    const humanMoves = moves.filter(move => {
+      // Include moves that are explicitly marked as player moves
+      if (move.actor === 'player') return true;
+      
+      // For multiplayer games, include moves that don't have actor field or have human-like actors
+      // (since both players are human in multiplayer)
+      if (!move.actor || move.actor === 'human' || move.actor === 'user') return true;
+      
+      // Exclude obvious AI moves
+      if (move.actor === 'ai' || move.actor === 'computer' || move.actor === 'bot') return false;
+      
+      // If we can't determine the actor type, include it (better to show than hide)
+      return true;
+    });
+    
+    console.log(`🔍 [ProfilePage] Human moves filtered:`, humanMoves);
+    console.log(`🔍 [ProfilePage] Classifications found:`, humanMoves.map(m => m.classification).filter(Boolean));
+    
+    return humanMoves;
+  };
+
   // Calculate move statistics for a game
   const calculateMoveStats = (moves) => {
     if (!Array.isArray(moves) || moves.length === 0) return null;
     
-    // Only analyze player moves, ignore AI moves
-    const playerMoves = moves.filter(move => move.actor === 'player');
-    if (playerMoves.length === 0) return null;
+    const humanMoves = getHumanMoves(moves);
+    if (humanMoves.length === 0) return null;
     
     const stats = {};
     
-    playerMoves.forEach(move => {
+    humanMoves.forEach(move => {
       if (!move.classification) return;
       stats[move.classification] = (stats[move.classification] || 0) + 1;
     });
     
-    return { player: stats, totalPlayerMoves: playerMoves.length };
+    return { player: stats, totalPlayerMoves: humanMoves.length };
+  };
+
+  // Convert coordinates to readable format for display
+  const formatMoveCoordinate = (coordinate) => {
+    // Handle array format [row, col] -> convert to algebraic notation
+    if (Array.isArray(coordinate) && coordinate.length >= 2) {
+      const file = String.fromCharCode(97 + coordinate[1]); // 0 = 'a'
+      const rank = 8 - coordinate[0]; // 0 = '8'
+      return file + rank;
+    }
+    
+    // Handle string format (already algebraic notation)
+    if (typeof coordinate === 'string') {
+      return coordinate;
+    }
+    
+    // Fallback
+    return String(coordinate);
   };
 
 
@@ -365,7 +418,7 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
             </div>
             <div className="flex items-center gap-1 text-green-400">
               <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-              <span>vs Player matches</span>
+              <span>Multiplayer matches</span>
             </div>
           </div>
           
@@ -406,6 +459,14 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
                           </>
                         ) : game.gameType === 'vs-ai' ? (
                           `vs ${game.opponent || 'AI'}`
+                        ) : game.gameType === 'multiplayer_competitive' ? (
+                          <>
+                            <span className="text-orange-400">[Competitive]</span> vs {game.opponent || 'Player'}
+                          </>
+                        ) : game.gameType === 'multiplayer_unranked' ? (
+                          <>
+                            <span className="text-green-400">[Unranked]</span> vs {game.opponent || 'Player'}
+                          </>
                         ) : (
                           `vs ${game.opponent || 'Player'}`
                         )}
@@ -430,9 +491,9 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
                         <span className="text-white">
                           {(() => {
                             if (Array.isArray(game.moves) && game.moves.length > 0) {
-                              const playerMoves = game.moves.filter(move => move.actor === 'player').length;
+                              const humanMoves = getHumanMoves(game.moves);
                               const totalMoves = game.moves.length;
-                              return `${playerMoves} (${totalMoves})`;
+                              return `${humanMoves.length} (${totalMoves})`;
                             }
                             // Fallback to movesPlayed if moves array not available
                             return game.movesPlayed || 0;
@@ -463,61 +524,80 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
                       </div>
                     )}
 
-                    {/* Move Analysis Summary */}
-                    {Array.isArray(game.moves) && game.moves.length > 0 && (() => {
-                      const moveStats = calculateMoveStats(game.moves);
-                      if (!moveStats) return null;
+                    {/* Move Analysis Summary and Preview */}
+                    {Array.isArray(game.moves) && game.moves.length > 0 ? (
+                      (() => {
+                        const moveStats = calculateMoveStats(game.moves);
 
-                      return (
-                        <div className="mt-3 pt-3 border-t border-white/10">
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {Object.entries(moveStats.player).map(([classification, count]) => {
-                              const display = getClassificationDisplay(classification);
-                              return (
-                                <div key={classification} className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${display.bg} ${display.color}`}>
-                                  <span>{display.icon}</span>
-                                  <span>{classification}</span>
-                                  <span className="font-bold">x{count}</span>
-                                </div>
-                              );
-                            })}
+                        return (
+                          <div className="mt-3 pt-3 border-t border-white/10">
+                            {/* Move Statistics (if available) */}
+                            {moveStats && (
+                              <div className="flex flex-wrap gap-2 mb-2">
+                                {Object.entries(moveStats.player).map(([classification, count]) => {
+                                  const display = getClassificationDisplay(classification);
+                                  return (
+                                    <div key={classification} className={`px-2 py-1 rounded text-xs flex items-center gap-1 ${display.bg} ${display.color}`}>
+                                      <span>{display.icon}</span>
+                                      <span>{classification}</span>
+                                      <span className="font-bold">x{count}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            
+                            {/* Action Buttons */}
+                            <div className="flex items-center gap-2">
+                              {/* Show/Hide Moves Button (only if we have move stats) */}
+                              {moveStats && (
+                                <button
+                                  onClick={() => setExpandedGame(expandedGame === game.gameId ? null : game.gameId)}
+                                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                >
+                                  {expandedGame === game.gameId ? 'Hide Human Moves ▲' : 'Show Human Moves ▼'} ({moveStats.totalPlayerMoves})
+                                </button>
+                              )}
+                              
+                              {/* Preview Moves Button (always show if moves exist) */}
+                              <button
+                                onClick={() => {
+                                  setPreviewMoves(game.moves); // Pass all moves for accurate board state
+                                  setPreviewGameId(game.gameId);
+                                  setShowMovePreview(true);
+                                }}
+                                className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded flex items-center gap-1 transition-colors"
+                              >
+                                <IoEye className="text-xs" />
+                                Preview Moves ({game.moves.length})
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => setExpandedGame(expandedGame === game.gameId ? null : game.gameId)}
-                              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                            >
-                              {expandedGame === game.gameId ? 'Hide Player Moves ▲' : 'Show Player Moves ▼'} ({moveStats.totalPlayerMoves})
-                            </button>
-                            <button
-                              onClick={() => {
-                                setPreviewMoves(game.moves); // Pass all moves for accurate board state
-                                setPreviewGameId(game.gameId);
-                                setShowMovePreview(true);
-                              }}
-                              className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded flex items-center gap-1 transition-colors"
-                            >
-                              <IoEye className="text-xs" />
-                              Preview Moves
-                            </button>
+                        );
+                      })()
+                    ) : (
+                      // Show a minimal preview button even if no moves are stored (for debugging)
+                      game.gameType?.includes('multiplayer') && (
+                        <div className="mt-3 pt-3 border-t border-white/10">
+                          <div className="text-xs text-white/50 mb-2">
+                            No detailed moves recorded for this game
                           </div>
                         </div>
-                      );
-                    })()}
+                      )
+                    )}
 
                     {/* Expanded Move List */}
                     {expandedGame === game.gameId && Array.isArray(game.moves) && (
                       <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
-                        <div className="text-xs text-white/70 mb-2">Player Move Details:</div>
-                        {game.moves
-                          .filter(move => move.actor === 'player') // Only show player moves
+                        <div className="text-xs text-white/70 mb-2">Human Move Details:</div>
+                        {getHumanMoves(game.moves) // Only show human moves (both single-player and multiplayer)
                           .map((move, moveIndex) => {
                           const display = move.classification ? getClassificationDisplay(move.classification) : null;
                           return (
                             <div key={moveIndex} className="flex items-center justify-between p-2 bg-black/20 rounded text-xs">
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-white/80">
-                                  {moveIndex + 1}. {move.from}→{move.to}
+                                  {moveIndex + 1}. {formatMoveCoordinate(move.from)}→{formatMoveCoordinate(move.to)}
                                 </span>
                                 <span className="capitalize text-white/60">{move.piece}</span>
                                 {move.captured && (

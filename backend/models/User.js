@@ -65,7 +65,7 @@ const userSchema = new mongoose.Schema({
   },
   gameHistory: [{
     gameId: { type: String, required: true },
-    gameType: { type: String, enum: ['campaign', 'vs-ai', 'vs-player'], required: true },
+    gameType: { type: String, enum: ['campaign', 'vs-ai', 'vs-player', 'multiplayer', 'multiplayer_competitive', 'multiplayer_unranked'], required: true },
     opponent: { type: String }, // AI difficulty or player username
     result: { type: String, enum: ['win', 'loss', 'draw', 'in-progress'], required: true },
     duration: { type: Number }, // game duration in milliseconds
@@ -165,6 +165,7 @@ userSchema.methods.recordGameResult = function(gameData) {
     result,
     duration,
     movesPlayed = 0,
+    moves, // Include moves array
     coinsEarned = 0,
     energySpent = 1,
     levelId,
@@ -174,13 +175,14 @@ userSchema.methods.recordGameResult = function(gameData) {
   } = gameData;
 
   // Add to game history
-  this.gameHistory.push({
+  const gameEntry = {
     gameId: gameId || new Date().getTime().toString(),
     gameType,
     opponent,
     result,
     duration,
     movesPlayed,
+    moves, // Include moves array in the saved data
     coinsEarned,
     energySpent,
     levelId,
@@ -188,7 +190,12 @@ userSchema.methods.recordGameResult = function(gameData) {
     playerColor,
     endReason,
     createdAt: new Date()
-  });
+  };
+  
+  console.log(`📝 [User] Recording game result with ${Array.isArray(moves) ? moves.length : 0} moves`);
+  console.log(`🎯 [User] Sample moves:`, Array.isArray(moves) && moves.length > 0 ? JSON.stringify(moves.slice(0, 2), null, 2) : 'none');
+  
+  this.gameHistory.push(gameEntry);
 
   // Update statistics
   this.playerData.gamesPlayed++;

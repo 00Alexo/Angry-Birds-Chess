@@ -65,10 +65,38 @@ const MovePreview = ({ moves, gameId, onClose }) => {
 
   // Convert algebraic notation to coordinates
   const algebraicToCoords = (notation) => {
-    if (!notation || notation.length < 2) return null;
-    const file = notation.charCodeAt(0) - 97; // 'a' = 0
-    const rank = 8 - parseInt(notation[1]); // '8' = 0
-    return { row: rank, col: file };
+    // Handle array format [row, col] (used by multiplayer)
+    if (Array.isArray(notation) && notation.length >= 2) {
+      return { row: notation[0], col: notation[1] };
+    }
+    
+    // Handle string algebraic notation (used by single-player)
+    if (typeof notation === 'string' && notation.length >= 2) {
+      const file = notation.charCodeAt(0) - 97; // 'a' = 0
+      const rank = 8 - parseInt(notation[1]); // '8' = 0
+      return { row: rank, col: file };
+    }
+    
+    // Invalid format
+    return null;
+  };
+
+  // Convert coordinates to readable format for display
+  const formatMoveCoordinate = (coordinate) => {
+    // Handle array format [row, col] -> convert to algebraic notation
+    if (Array.isArray(coordinate) && coordinate.length >= 2) {
+      const file = String.fromCharCode(97 + coordinate[1]); // 0 = 'a'
+      const rank = 8 - coordinate[0]; // 0 = '8'
+      return file + rank;
+    }
+    
+    // Handle string format (already algebraic notation)
+    if (typeof coordinate === 'string') {
+      return coordinate;
+    }
+    
+    // Fallback
+    return String(coordinate);
   };
 
   // Apply move to board
@@ -210,7 +238,7 @@ const MovePreview = ({ moves, gameId, onClose }) => {
             </div>
             {currentMove && (
               <div className="flex items-center justify-center gap-2 mt-1">
-                <span className="text-white font-mono">{currentMove.from}→{currentMove.to}</span>
+                <span className="text-white font-mono">{formatMoveCoordinate(currentMove.from)}→{formatMoveCoordinate(currentMove.to)}</span>
                 <span className="capitalize text-white/70">{currentMove.piece}</span>
                 {currentMove.actor && (
                   <span className={`px-2 py-1 rounded text-xs font-semibold ${
@@ -273,7 +301,7 @@ const MovePreview = ({ moves, gameId, onClose }) => {
           <div className="mt-4 p-3 bg-slate-700 rounded-lg">
             <div className="text-sm text-white/90">
               <div className="mb-2">
-                <strong>Move Details:</strong> {currentMove.piece} from {currentMove.from} to {currentMove.to}
+                <strong>Move Details:</strong> {currentMove.piece} from {formatMoveCoordinate(currentMove.from)} to {formatMoveCoordinate(currentMove.to)}
               </div>
               {currentMove.captured && (
                 <div className="text-red-400 mb-1">Captured: {currentMove.captured}</div>
