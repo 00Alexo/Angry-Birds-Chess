@@ -313,9 +313,35 @@ class MultiplayerSocket {
     };
   }
 
+  // Listen for player timeout events
+  onPlayerTimeout(cb) {
+    console.log('[MultiplayerSocket] Setting up player timeout listener');
+    if (!this.socket) return () => {};
+    const handler = (data) => {
+      console.log('[MultiplayerSocket] Player timeout received:', data);
+      cb(data);
+    };
+    this.socket.on('playerTimeout', handler);
+    return () => {
+      console.log('[MultiplayerSocket] Removing player timeout listener');
+      this.socket.off('playerTimeout', handler);
+    };
+  }
+
   setStatus(status) {
     if (!this.socket || !this.connected) return;
     this.socket.emit('multiplayer:status', { status });
+  }
+
+  // Generic emit method for custom events
+  emit(event, data) {
+    console.log(`[MultiplayerSocket] Emitting ${event}:`, data);
+    if (!this.socket || !this.connected) {
+      console.error('[MultiplayerSocket] Cannot emit - not connected');
+      return false;
+    }
+    this.socket.emit(event, data);
+    return true;
   }
 
   disconnect() {

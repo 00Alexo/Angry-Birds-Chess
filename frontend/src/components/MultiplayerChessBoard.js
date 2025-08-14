@@ -26,6 +26,8 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
   const [aiInstance] = useState(new ChessAI());
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [gameEndData, setGameEndData] = useState(null); // For showing game end modal
+  const [myTimer, setMyTimer] = useState(60); // MY timer - only counts when it's my turn
+  const [gameEnded, setGameEnded] = useState(false);
 
   // Initialize board when component mounts
   useEffect(() => {
@@ -80,6 +82,76 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
       window.removeEventListener('unload', handleUnload);
     };
   }, [matchData?.matchId, gameStatus]);
+
+  // MY timer - only runs when it's MY turn
+  useEffect(() => {
+    if (gameEnded || gameStatus !== 'active') {
+      return; // Don't run timer if game is over
+    }
+
+    // Only run MY timer when it's MY turn
+    if (currentPlayer !== myColor) {
+      console.log(`⏸️ [MultiplayerChess] MY timer paused - it's ${currentPlayer}'s turn, I am ${myColor}`);
+      return; // Don't run my timer, it's not my turn
+    }
+
+    console.log(`⏰ [MultiplayerChess] Starting MY 60s timer - it's my turn (${myColor})`);
+
+    const interval = setInterval(() => {
+      setMyTimer(prev => {
+        const newTime = prev - 1;
+        
+        if (newTime <= 0) {
+          console.log('⏰ [MultiplayerChess] MY TIMER EXPIRED! I lose!');
+          
+          // I timed out, opponent wins
+          const winner = myColor === 'white' ? 'black' : 'white';
+          
+          console.log('⏰ [MultiplayerChess] Timeout details:');
+          console.log('⏰ [MultiplayerChess] - My color:', myColor);
+          console.log('⏰ [MultiplayerChess] - Winner (opponent):', winner);
+          console.log('⏰ [MultiplayerChess] - Loser (me):', myColor);
+          
+          // End the game immediately
+          setGameEnded(true);
+          setGameStatus('timeout');
+          
+          // Send timeout notification via WebSocket
+          const timeoutData = {
+            gameId: matchData?.matchId, // Use matchId instead of gameId
+            player: myColor,
+            winner: winner
+          };
+          
+          console.log('⏰ [MultiplayerChess] Sending timeout event:', timeoutData);
+          console.log('⏰ [MultiplayerChess] matchData.matchId:', matchData?.matchId);
+          multiplayerSocket.emit('playerTimeout', timeoutData);
+          
+          // Show game end modal
+          setGameEndData({
+            result: 'loss', // I lost due to MY timeout
+            reason: 'timeout',
+            winner: winner,
+            loser: myColor,
+            matchId: matchData?.matchId
+          });
+          
+          return 0;
+        }
+        return newTime;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [currentPlayer, myColor, gameEnded, gameStatus, matchData?.matchId]);
+
+  // Reset MY timer to 60 seconds when it becomes my turn
+  useEffect(() => {
+    if (currentPlayer === myColor && !gameEnded && gameStatus === 'active') {
+      console.log(`🔄 [MultiplayerChess] Resetting MY timer to 60s - my turn started`);
+      setMyTimer(60);
+    }
+  }, [currentPlayer, myColor, gameEnded, gameStatus]);
 
   // Initialize chess board with pieces oriented correctly for each player
   const initializeBoard = () => {
@@ -160,6 +232,31 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
         matchId: data.matchId
       });
     });
+
+    // Listen for timeout events (when opponent times out)
+    const unsubscribeTimeout = multiplayerSocket.onPlayerTimeout((data) => {
+      console.log('⏰ [MultiplayerChess] ===== OPPONENT TIMEOUT RECEIVED =====');
+      console.log('⏰ [MultiplayerChess] Timeout data:', data);
+      console.log('⏰ [MultiplayerChess] My color:', myColor);
+      console.log('⏰ [MultiplayerChess] Winner from event:', data.winner);
+      console.log('⏰ [MultiplayerChess] Am I the winner?', data.winner === myColor);
+      
+      // Stop local timer and end game
+      setGameEnded(true);
+      setGameStatus('timeout');
+      
+      // Show game end modal
+      const gameEndResult = {
+        result: data.winner === myColor ? 'win' : 'loss',
+        reason: 'timeout',
+        winner: data.winner,
+        loser: data.player,
+        matchId: matchData?.matchId
+      };
+      
+      console.log('⏰ [MultiplayerChess] Setting game end data:', gameEndResult);
+      setGameEndData(gameEndResult);
+    });
     
     console.log('✅ [MultiplayerChess] All listeners set up successfully');
     
@@ -167,6 +264,7 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
     window.multiplayerCleanup = () => {
       unsubscribeOpponentMove();
       unsubscribeGameEnd();
+      unsubscribeTimeout();
     };
   }, []);
 
@@ -828,6 +926,23 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
           </div>
           
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* My Timer - only shows when it's my turn */}
+            {currentPlayer === myColor && (
+              <div className="bg-slate-800 rounded-lg p-2 text-xs">
+                <div className="text-slate-400 mb-1">My Timer</div>
+                <div className={`font-mono text-lg font-bold ${
+                  myTimer <= 10 ? 'text-red-400 animate-pulse' :
+                  myTimer <= 30 ? 'text-orange-400' :
+                  'text-green-400'
+                }`}>
+                  {myTimer}s
+                </div>
+                <div className="text-xs text-green-400 mt-1">
+                  🎯 Your move!
+                </div>
+              </div>
+            )}
+
             {/* Battle Status - Compact */}
             <div className="bg-slate-800 rounded-lg p-2 text-xs hidden sm:block">
               <div className="text-slate-400 mb-1">Status</div>

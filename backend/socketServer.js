@@ -19,6 +19,26 @@ io.on('connection', (socket) => {
   // Test connection
   socket.emit('connected', { message: 'Connected to WebSocket server', socketId: socket.id });
 
+  // Handle player timeout events
+  socket.on('playerTimeout', (data) => {
+    console.log('⏰ [WebSocket] Player timeout event received:', data);
+    console.log('⏰ [WebSocket] Broadcasting to all other clients...');
+    
+    const { gameId, player, winner } = data;
+    
+    const timeoutEvent = {
+      gameId,
+      player,
+      winner,
+      timestamp: Date.now()
+    };
+    
+    // Broadcast timeout event to all OTHER connected clients
+    socket.broadcast.emit('playerTimeout', timeoutEvent);
+    console.log('⏰ [WebSocket] Timeout event broadcasted:', timeoutEvent);
+    console.log('⏰ [WebSocket] Number of connected clients:', io.sockets.sockets.size);
+  });
+
   // Handle game start
   socket.on('start-game', (data) => {
     console.log('🎮 [WebSocket] Game start request:', data);

@@ -540,6 +540,33 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle player timeout events
+  socket.on('playerTimeout', async (data) => {
+    try {
+      console.log('⏰ [Multiplayer] ===== PLAYER TIMEOUT =====');
+      console.log('⏰ [Multiplayer] Timeout data:', JSON.stringify(data, null, 2));
+      
+      const { gameId, player, winner } = data;
+      
+      // gameId should be the matchId
+      const match = activeMatches.get(gameId);
+      
+      if (match) {
+        console.log('⏰ [Multiplayer] Found match for timeout:', match.matchId);
+        
+        // The player who timed out is the "leaving" player
+        await handleMultiplayerGameEnd(match.matchId, socket.id, 'timeout');
+        
+      } else {
+        console.warn('⏰ [Multiplayer] Match not found for timeout:', gameId);
+        console.log('⏰ [Multiplayer] Active matches:', Array.from(activeMatches.keys()));
+      }
+      
+    } catch (err) {
+      console.error('❌ [Multiplayer] Error handling timeout:', err);
+    }
+  });
+
   // Handle natural multiplayer game endings (checkmate, draw, stalemate)
   socket.on('multiplayer:game-ended', async (data) => {
     try {
