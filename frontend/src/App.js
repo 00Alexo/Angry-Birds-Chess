@@ -7,7 +7,7 @@ import CharactersPage from './components/CharactersPage';
 import CampaignPage from './components/CampaignPage';
 import ChessBoardPage from './components/ChessBoardPage';
 import MultiplayerChessBoard from './components/MultiplayerChessBoard';
-import EnergyTestPage from './components/EnergyTestPage';
+// import EnergyTestPage from './components/EnergyTestPage';
 import ShopPage from './components/ShopPage';
 import ProfilePage from './components/ProfilePage';
 import MultiplayerPage from './components/MultiplayerPage';
@@ -32,9 +32,7 @@ function AppContent() {
   // Parse URL for routing (including /profile/:username)
   useEffect(() => {
     const path = window.location.pathname;
-    if (path === '/testing' && isAuthenticated) {
-      setCurrentScreen('energy-test');
-    } else if (path.startsWith('/profile/')) {
+  if (path.startsWith('/profile/')) {
       const username = decodeURIComponent(path.replace('/profile/', ''));
       setProfileUsername(username);
       setCurrentScreen('profile');
@@ -218,8 +216,8 @@ function AppContent() {
   };
 
   const handleShowTesting = () => {
-    setCurrentScreen('energy-test');
-    window.history.pushState(null, null, '/testing');
+  // setCurrentScreen('energy-test');
+  // window.history.pushState(null, null, '/testing');
   };
 
   const handleShowShop = () => {
@@ -268,8 +266,8 @@ function AppContent() {
 
   const renderCurrentScreen = () => {
     switch (currentScreen) {
-      case 'energy-test':
-        return <EnergyTestPage onBack={handleBackToMenu} />;
+  // case 'energy-test':
+  //   return <EnergyTestPage onBack={handleBackToMenu} />;
       case 'characters':
         return <CharactersPage onBack={handleBackToMenu} playerInventory={playerInventory} />;
       case 'shop':
@@ -358,7 +356,6 @@ function AppContent() {
             onShowCharacters={handleShowCharacters}
             onSelectDifficulty={handleSelectDifficulty}
             onShowCampaign={handleShowCampaign}
-            onShowTesting={handleShowTesting}
             onShowShop={handleShowShop}
             onShowProfile={handleShowProfile}
             onLogout={handleLogout}

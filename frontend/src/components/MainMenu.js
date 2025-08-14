@@ -12,7 +12,6 @@ const MainMenu = ({
   onShowCharacters, 
   onSelectDifficulty, 
   onShowCampaign, 
-  onShowTesting,
   onShowShop,
   onShowProfile,
   onLogout,
@@ -106,115 +105,7 @@ const MainMenu = ({
 
   useEffect(() => {
     setShowAnimation(true);
-    // Load selected theme from database
-    if (getSelectedTheme) {
-      getSelectedTheme().then(theme => {
-        setSelectedTheme(theme || 'default');
-      }).catch(error => {
-        console.error('Failed to load selected theme:', error);
-        setSelectedTheme('default');
-      });
-    }
-  }, [getSelectedTheme]);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (showUserDropdown && !event.target.closest('.user-dropdown-container')) {
-        setShowUserDropdown(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showUserDropdown]);
-
-  // Handle theme selection
-  const handleThemeChange = async (themeId) => {
-    setSelectedTheme(themeId);
-    if (saveSelectedTheme) {
-      const success = await saveSelectedTheme(themeId);
-      if (success) {
-        console.log(`✅ Theme changed to: ${themeId}`);
-      } else {
-        console.error('❌ Failed to save selected theme');
-      }
-    }
-  };
-
-  const handleSingleplayerClick = () => {
-    setShowSingleplayerModal(true);
-  };
-
-  const handleCloseModal = () => {
-    setShowSingleplayerModal(false);
-  };
-
-  const handleDifficultySelect = (difficulty) => {
-    setShowSingleplayerModal(false);
-    onSelectDifficulty(difficulty);
-  };
-
-  const handleCampaignClick = () => {
-    setShowSingleplayerModal(false);
-    onShowCampaign();
-  };
-
-  // Function to get pieces for board preview
-  const getBoardPreviewPiece = (index) => {
-    const row = Math.floor(index / 8);
-    const col = index % 8;
-    
-    // Top row (pigs - AI team)
-    if (row === 0) {
-      switch (col) {
-        case 0:
-        case 7:
-          return <CorporalPig size={28} />; // Rook
-        case 1:
-        case 6:
-          return <NinjaPig size={28} />; // Knight
-        case 2:
-        case 5:
-          return <ForemanPig size={28} />; // Bishop
-        case 3:
-          return <QueenPig size={28} />; // Queen
-        case 4:
-          return <KingPig size={30} />; // King
-        default:
-          return null;
-      }
-    } else if (row === 1) {
-      return <RegularPig size={24} />; // Pawns
-    }
-    
-    // Bottom row (birds - player team)
-    else if (row === 7) {
-      switch (col) {
-        case 0:
-        case 7:
-          return <YellowBird size={28} />; // Rook (Chuck)
-        case 1:
-        case 6:
-          return <BlackBird size={28} />; // Knight (Bomb)
-        case 2:
-        case 5:
-          return <WhiteBird size={28} />; // Bishop (Matilda)
-        case 3:
-          return <Stella size={28} />; // Queen (Stella)
-        case 4:
-          return <RedBird size={30} />; // King (Red)
-        default:
-          return null;
-      }
-    } else if (row === 6) {
-      return <BlueBird size={24} />; // Pawns (Jak and Jim)
-    }
-    
-    return null;
-  };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-400 via-green-300 to-blue-500 p-2">
@@ -603,21 +494,6 @@ const MainMenu = ({
               <p className="text-white/60 text-sm mt-2">Fight through pig villages</p>
             </div>
 
-            {/* Testing Button (Development) */}
-            {process.env.NODE_ENV === 'development' && (
-              <div className="text-center mt-6">
-                <button
-                  onClick={onShowTesting}
-                  className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700
-                             text-white font-bold py-2 px-6 rounded-lg shadow-lg transform hover:scale-105 
-                             transition-all duration-200 flex items-center justify-center space-x-2 mx-auto text-sm"
-                >
-                  <IoSettings size={16} />
-                  <span>ENERGY TESTING</span>
-                </button>
-                <p className="text-white/40 text-xs mt-1">Developer testing page</p>
-              </div>
-            )}
           </div>
         </div>
       )}
