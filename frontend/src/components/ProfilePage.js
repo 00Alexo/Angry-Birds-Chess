@@ -22,6 +22,19 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
   const isOwnProfile = user && (user.username === userName);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [userRating, setUserRating] = useState(null); // Store actual rating from API
+
+  // Helper function to determine rating tier
+  const getRatingTier = (rating) => {
+    if (rating >= 2400) return { name: 'Super Grandmaster', emoji: '👑', color: 'from-yellow-400 to-orange-500' };
+    if (rating >= 2200) return { name: 'Grandmaster', emoji: '🏆', color: 'from-purple-400 to-pink-500' };
+    if (rating >= 2000) return { name: 'International Master', emoji: '⭐', color: 'from-indigo-400 to-purple-500' };
+    if (rating >= 1800) return { name: 'FIDE Master', emoji: '💎', color: 'from-blue-400 to-indigo-500' };
+    if (rating >= 1600) return { name: 'Expert', emoji: '🔥', color: 'from-orange-400 to-red-500' };
+    if (rating >= 1400) return { name: 'Advanced', emoji: '⚡', color: 'from-green-400 to-blue-500' };
+    if (rating >= 1200) return { name: 'Intermediate', emoji: '📈', color: 'from-cyan-400 to-green-500' };
+    return { name: 'Beginner', emoji: '🌱', color: 'from-gray-400 to-cyan-500' };
+  };
 
   // Fetch user profile from backend
   useEffect(() => {
@@ -37,8 +50,18 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
         } else if (res.ok) {
           const data = await res.json();
           setProfileData(data);
-          // If authenticated and viewing own profile (match by username), fetch extended game history
+          
+          // If viewing own profile, fetch current rating from API
           if (isOwnProfile) {
+            try {
+              const ratingData = await apiService.getUserRating();
+              setUserRating(ratingData);
+              console.log('🏆 [ProfilePage] Fetched user rating:', ratingData);
+            } catch (error) {
+              console.error('Failed to fetch user rating:', error);
+            }
+            
+            // Fetch game history
             try {
               setHistoryLoading(true);
               const historyData = await apiService.getGameHistory(historyLimit);
@@ -259,61 +282,172 @@ const ProfilePage = ({ onBack, playerInventory, userName, userStats, anyProfile 
 
 
   const renderOverview = () => (
-    <div className="space-y-6">
-      {/* Player Card */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-6 text-white">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-              <IoPerson size={32} className="text-white" />
-            </div>
+    <div className="space-y-8">
+      {/* Main Elo Rating Card */}
+      <div className="bg-slate-900 rounded-2xl p-8 border border-gray-600 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-purple-500/10"></div>
+        <div className="relative z-10">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-2xl font-bold">{userName || 'Anonymous Player'}</h2>
+              <h2 className="text-3xl font-bold text-white mb-1">{userName || 'Anonymous Player'}</h2>
+              <div className="flex items-center space-x-3">
+                <span className="text-lg font-medium text-gray-300">
+                  {getRatingTier(userRating?.current || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200).name}
+                </span>
+                <span className="text-2xl">
+                  {getRatingTier(userRating?.current || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200).emoji}
+                </span>
               </div>
-              <p className="text-white/90">Chess Master in Training</p>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-400 mb-1">COMPETITIVE RATING</div>
+              <div className="text-5xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                {console.log('🔍 [DEBUG] userRating from API:', userRating)}
+                {console.log('🔍 [DEBUG] profileData rating:', profileData?.playerData?.rating)}
+                {Math.round(userRating?.current || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200)}
+              </div>
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-3xl font-bold">{currentStats.winRate}%</div>
-            <div className="text-sm text-white/90">Win Rate</div>
+          
+          <div className="grid grid-cols-3 gap-6">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white mb-1">
+                {Math.round(userRating?.peak || profileData?.playerData?.rating?.peak || userRating?.current || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200)}
+              </div>
+              <div className="text-sm text-gray-400">Peak Rating</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white mb-1">
+                {userRating?.gamesPlayed || profileData?.playerData?.rating?.gamesPlayed || 0}
+              </div>
+              <div className="text-sm text-gray-400">Rated Games</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white mb-1">
+                {(userRating?.current || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) > 1200 ? '+' : ''}
+                {Math.round((userRating?.current || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) - 1200)}
+              </div>
+              <div className="text-sm text-gray-400">Progress</div>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Quick Stats Grid */}
+      {/* Peak Rating Achievement Block */}
+      <div className="bg-gradient-to-r from-amber-600/20 to-orange-600/20 rounded-xl p-6 border border-amber-500/40 bg-slate-800">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-amber-500 to-orange-500 rounded-full flex items-center justify-center">
+              <IoStatsChart size={24} className="text-white" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-white mb-1">Peak Achievement</h3>
+              <p className="text-gray-300">Highest competitive rating reached</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-3xl font-bold text-amber-400">
+              {Math.round(profileData?.playerData?.rating?.peak || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200)}
+            </div>
+            <div className="text-sm text-gray-400">
+              {(profileData?.playerData?.rating?.peak || 0) > (profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) ? 
+                `+${Math.round((profileData?.playerData?.rating?.peak || 1200) - (profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200))} from current` : 
+                'Current peak'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Performance Statistics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
-          <IoGameController size={32} className="text-blue-400 mx-auto mb-2" />
-          <div className="text-2xl font-bold text-white">
-            {currentStats.gamesPlayed}
-            {campaignStats && <span className="text-sm text-white/60 ml-1">({campaignStats.gamesPlayed})</span>}
+        <div className="bg-slate-800 backdrop-blur-sm rounded-xl p-6 border border-gray-600">
+          <div className="flex items-center justify-between mb-3">
+            <IoStatsChart size={20} className="text-emerald-400" />
+            <div className="text-xs text-gray-400 font-mono">WINS</div>
           </div>
-          <div className="text-sm text-white/90">
-            Games Played
-            {campaignStats && <div className="text-xs text-white/60">(Campaign in parentheses)</div>}
-          </div>
+          <div className="text-2xl font-bold text-white mb-1">{currentStats.gamesWon}</div>
+          <div className="text-sm text-gray-300">Victories</div>
         </div>
-        <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
-          <IoStatsChart size={32} className="text-yellow-400 mx-auto mb-2" />
-          <div className="text-2xl font-bold text-white">
-            {currentStats.gamesWon}
-            {campaignStats && <span className="text-sm text-white/60 ml-1">({campaignStats.gamesWon})</span>}
+        
+        <div className="bg-slate-800 backdrop-blur-sm rounded-xl p-6 border border-gray-600">
+          <div className="flex items-center justify-between mb-3">
+            <IoGameController size={20} className="text-blue-400" />
+            <div className="text-xs text-gray-400 font-mono">TOTAL</div>
           </div>
-          <div className="text-sm text-white/90">
-            Victories
-            {campaignStats && <div className="text-xs text-white/60">(Campaign in parentheses)</div>}
+          <div className="text-2xl font-bold text-white mb-1">{currentStats.gamesPlayed}</div>
+          <div className="text-sm text-gray-300">Games Played</div>
+        </div>
+        
+        <div className="bg-slate-800 backdrop-blur-sm rounded-xl p-6 border border-gray-600">
+          <div className="flex items-center justify-between mb-3">
+            <IoFlame size={20} className="text-orange-400" />
+            <div className="text-xs text-gray-400 font-mono">STREAK</div>
           </div>
+          <div className="text-2xl font-bold text-white mb-1">{currentStats.currentWinStreak}</div>
+          <div className="text-sm text-gray-300">Current</div>
         </div>
-        <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
-          <IoFlame size={32} className="text-orange-400 mx-auto mb-2" />
-          <div className="text-2xl font-bold text-white">{currentStats.currentWinStreak}</div>
-          <div className="text-sm text-white/90">Win Streak</div>
+        
+        <div className="bg-slate-800 backdrop-blur-sm rounded-xl p-6 border border-gray-600">
+          <div className="flex items-center justify-between mb-3">
+            <IoAnalytics size={20} className="text-purple-400" />
+            <div className="text-xs text-gray-400 font-mono">WIN%</div>
+          </div>
+          <div className="text-2xl font-bold text-white mb-1">{currentStats.winRate}%</div>
+          <div className="text-sm text-gray-300">Success Rate</div>
         </div>
-        <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 text-center border border-white/30">
-          <IoCash size={32} className="text-green-400 mx-auto mb-2" />
-          <div className="text-2xl font-bold text-white">{playerInventory?.coins || 0}</div>
-          <div className="text-sm text-white/90">Coins</div>
+      </div>
+
+      {/* Competitive Performance Analysis */}
+      <div className="bg-slate-800 backdrop-blur-sm rounded-xl p-6 border border-gray-600">
+        <h3 className="text-xl font-bold text-white mb-6 flex items-center">
+          <IoAnalytics className="mr-3 text-blue-400" />
+          Competitive Analysis
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center py-2 border-b border-gray-600">
+              <span className="text-gray-200 font-medium">Current Rating</span>
+              <span className="text-blue-400 font-bold text-lg">
+                {Math.round(profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-gray-600">
+              <span className="text-gray-200 font-medium">Peak Rating</span>
+              <span className="text-amber-400 font-bold">
+                {Math.round(profileData?.playerData?.rating?.peak || profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200)}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-gray-200 font-medium">Rating Tier</span>
+              <span className="text-purple-400 font-bold">
+                {getRatingTier(profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200).name}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center py-2 border-b border-gray-600">
+              <span className="text-gray-200 font-medium">Competitive Games</span>
+              <span className="text-cyan-400 font-bold">
+                {gameHistory.filter(game => game.gameType?.includes('competitive')).length}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-gray-600">
+              <span className="text-gray-200 font-medium">Competitive Wins</span>
+              <span className="text-emerald-400 font-bold">
+                {gameHistory.filter(game => game.gameType?.includes('competitive') && game.result === 'win').length}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-gray-200 font-medium">Net Rating Change</span>
+              <span className={`font-bold ${
+                (profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) > 1200 ? 'text-emerald-400' : 
+                (profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) < 1200 ? 'text-red-400' : 'text-gray-400'
+              }`}>
+                {(profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) > 1200 ? '+' : ''}
+                {Math.round((profileData?.playerData?.rating?.competitive || profileData?.playerData?.rating?.current || 1200) - 1200)}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

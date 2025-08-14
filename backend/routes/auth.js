@@ -11,6 +11,11 @@ const router = express.Router();
 // @access  Public
 router.get('/profile/:username', authController.getUserProfile);
 
+// @route   GET /api/auth/rating
+// @desc    Get current user's Elo rating
+// @access  Private
+router.get('/rating', auth, authController.getUserRating);
+
 router.post('/register', [
   body('username')
     .isLength({ min: 3, max: 20 })

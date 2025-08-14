@@ -13,9 +13,16 @@ const getUserProfile = async (req, res) => {
       return res.status(404).json({ error: 'User not found.' });
     }
     console.log(`[PROFILE API] User found:`, user.username);
+    
+    // Create a modified playerData object that includes the rating from the top-level rating field
+    const playerDataWithRating = {
+      ...user.playerData,
+      rating: user.rating  // Add the rating from the top-level field
+    };
+    
     res.json({
       username: user.username,
-      playerData: user.playerData,
+      playerData: playerDataWithRating,
       gameStats: user.getGameStats(),
       gameHistory: user.gameHistory.slice(-10), // Last 10 games for profile preview
       createdAt: user.createdAt
@@ -25,6 +32,30 @@ const getUserProfile = async (req, res) => {
     res.status(500).json({ error: 'Server error.' });
   }
 };
+
+// Get current user's Elo rating
+const getUserRating = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const rating = {
+      current: user.rating?.competitive || user.rating?.current || 1200,
+      peak: user.rating?.peak || user.rating?.competitive || user.rating?.current || 1200,
+      gamesPlayed: user.rating?.gamesPlayed || 0,
+      lastUpdated: user.rating?.lastUpdated || null
+    };
+
+    console.log(`🏆 [RATING API] Fetched rating for ${user.username}:`, rating);
+    res.json(rating);
+  } catch (err) {
+    console.error('[RATING API] Server error:', err);
+    res.status(500).json({ error: 'Server error.' });
+  }
+};
+
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
@@ -233,5 +264,6 @@ module.exports = {
   login,
   getCurrentUser,
   verifyToken,
-  getUserProfile
+  getUserProfile,
+  getUserRating
 };

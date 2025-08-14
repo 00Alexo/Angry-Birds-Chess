@@ -84,6 +84,10 @@ class ApiService {
     return this.request('/auth/me');
   }
 
+  async getUserRating() {
+    return this.request('/auth/rating');
+  }
+
   async verifyToken() {
     return this.request('/auth/verify-token', {
       method: 'POST',
