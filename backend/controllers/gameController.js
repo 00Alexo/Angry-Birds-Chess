@@ -1322,6 +1322,25 @@ const getUnfinishedGamesCount = async (req, res) => {
   }
 };
 
+// Get user's rating information
+const getRatingInfo = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'User not authenticated.' });
+    }
+
+    const ratingStats = req.user.getRatingStats();
+    
+    return res.status(200).json({
+      message: 'Rating information retrieved successfully',
+      rating: ratingStats
+    });
+  } catch (error) {
+    console.error('Get rating info error:', error);
+    return res.status(500).json({ error: 'Internal server error occurred while getting rating information.' });
+  }
+};
+
 module.exports = {
   getPlayerData,
   updatePlayerData,
@@ -1338,5 +1357,6 @@ module.exports = {
   endGame,
   getGameHistory,
   markUnfinishedGamesAsLosses,
-  getUnfinishedGamesCount
+  getUnfinishedGamesCount,
+  getRatingInfo
 };

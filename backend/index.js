@@ -149,7 +149,7 @@ io.on('connection', (socket) => {
   });
 
   // Matchmaking: Join queue
-  socket.on('multiplayer:join-queue', (payload = {}) => {
+  socket.on('multiplayer:join-queue', async (payload = {}) => {
     try {
       const gameMode = payload.gameMode === 'unranked' ? 'unranked' : 'competitive';
       const player = onlinePlayers.get(socket.id);
@@ -168,17 +168,32 @@ io.on('connection', (socket) => {
         console.log(`🔄 [Queue] Removed ${player.username} from previous queue`);
       }
 
+      // Get player's competitive rating
+      let playerRating = 1200; // Default rating
+      try {
+        const user = await User.findById(player.userId);
+        if (user) {
+          playerRating = user.getCompetitiveRating();
+          console.log(`📊 [Queue] Retrieved rating for ${player.username}: ${playerRating}`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ [Queue] Could not fetch rating for ${player.username}, using default: ${error.message}`);
+      }
+
       // Add to requested queue
       const queueEntry = {
         socketId: socket.id,
-        player: { ...player },
+        player: { 
+          ...player, 
+          rating: playerRating // Include rating in player data
+        },
         queueTime: Date.now(),
         gameMode,
         ratingRange: gameMode === 'competitive' ? 200 : 999999 // Wider range for unranked
       };
 
       matchmakingQueues[gameMode].set(socket.id, queueEntry);
-      console.log(`✅ [Queue] ${player.username} joined ${gameMode} queue (${matchmakingQueues[gameMode].size} players total)`);
+      console.log(`✅ [Queue] ${player.username} joined ${gameMode} queue with rating ${playerRating} (${matchmakingQueues[gameMode].size} players total)`);
 
       // Update player status
       player.status = 'in-queue';
@@ -642,185 +657,98 @@ io.on('connection', (socket) => {
       // Save match results to database - handle cases where some players might not have userId
       if (match.player1.userId || match.player2.userId) {
         try {
+          console.log(`🔧 [DEBUG] About to require User and multiplayerRatingService...`);
           const User = require('./models/User');
+          const multiplayerRatingService = require('./services/multiplayerRatingService');
+          console.log(`✅ [DEBUG] Successfully imported User and multiplayerRatingService`);
           
           // Create detailed game history entries for both players
           const gameId = `multiplayer_${matchId}_${Date.now()}`;
           const matchDuration = match.startTime ? Date.now() - match.startTime : 0;
           
           console.log(`⏱️ [Multiplayer] Match duration calculation: ${Date.now()} - ${match.startTime} = ${matchDuration}ms`);
+          console.log(`🔧 [DEBUG] About to prepare player data...`);
           
+          // Prepare player data for rating service
+          const player1Data = {
+            userId: match.player1.userId,
+            username: match.player1.username,
+            rating: match.player1.rating || 1200 // Use stored rating or default
+          };
+          
+          const player2Data = {
+            userId: match.player2.userId,
+            username: match.player2.username,
+            rating: match.player2.rating || 1200 // Use stored rating or default
+          };
+          
+          // Prepare game data
+          const gameData = {
+            gameId,
+            duration: matchDuration,
+            movesPlayed: match.moveCount || 0,
+            moves: match.moveHistory || [],
+            coinsEarned: result === 'draw' ? 50 : 250, // Draw: 50 coins, Win: 250 coins
+            energySpent: 1,
+            endReason: reason,
+            player1Color: 'white', // Player1 is always white
+            player2Color: 'black'  // Player2 is always black
+          };
+          
+          // Determine result format for rating service
+          let ratingServiceResult;
           if (result === 'draw') {
-            // Both players get draw results - handle with userId fallback
-            let player1User = null;
-            if (match.player1.userId) {
-              player1User = await User.findById(match.player1.userId);
-            } else {
-              console.log(`⚠️ [Multiplayer] Player1 has no userId, trying to find by username: ${match.player1.username}`);
-              player1User = await User.findOne({ username: match.player1.username });
-            }
-            
-            let player2User = null;
-            if (match.player2.userId) {
-              player2User = await User.findById(match.player2.userId);
-            } else {
-              console.log(`⚠️ [Multiplayer] Player2 has no userId, trying to find by username: ${match.player2.username}`);
-              player2User = await User.findOne({ username: match.player2.username });
-            }
-            
-            if (player1User) {
-              console.log(`🔍 [Multiplayer] Found player1 user: ${player1User.username}, current games: ${player1User.gameHistory.length}`);
-              
-              const player1GameData = {
-                gameId,
-                gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
-                opponent: match.player2.username,
-                result: 'draw',
-                duration: matchDuration,
-                movesPlayed: match.moveCount || 0,
-                moves: match.moveHistory || [], // Include detailed moves for preview
-                coinsEarned: 50, // Draw coins
-                energySpent: 1,
-                levelId: null,
-                stars: null,
-                playerColor: 'white', // Player1 is always white
-                endReason: reason
-              };
-              
-              console.log(`📝 [Multiplayer] Recording draw for ${player1User.username}:`, JSON.stringify(player1GameData, null, 2));
-              console.log(`🎯 [Multiplayer] Match moveHistory length: ${match.moveHistory ? match.moveHistory.length : 0}`);
-              console.log(`🎯 [Multiplayer] Sample moves:`, match.moveHistory ? JSON.stringify(match.moveHistory.slice(0, 3), null, 2) : 'none');
-              
-              player1User.recordGameResult(player1GameData);
-              player1User.markModified('gameHistory');
-              player1User.markModified('playerData');
-              
-              await player1User.save();
-              console.log(`✅ [Multiplayer] Player1 ${match.player1.username} game history saved - now has ${player1User.gameHistory.length} games`);
-            } else {
-              console.error(`❌ [Multiplayer] Player1 user ${match.player1.username} (${match.player1.userId}) not found in database!`);
-            }
-            
-            if (player2User) {
-              console.log(`🔍 [Multiplayer] Found player2 user: ${player2User.username}, current games: ${player2User.gameHistory.length}`);
-              
-              const player2GameData = {
-                gameId,
-                gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
-                opponent: match.player1.username,
-                result: 'draw',
-                duration: matchDuration,
-                movesPlayed: match.moveCount || 0,
-                moves: match.moveHistory || [], // Include detailed moves for preview
-                coinsEarned: 50, // Draw coins
-                energySpent: 1,
-                levelId: null,
-                stars: null,
-                playerColor: 'black', // Player2 is always black
-                endReason: reason
-              };
-              
-              console.log(`📝 [Multiplayer] Recording draw for ${player2User.username}:`, JSON.stringify(player2GameData, null, 2));
-              
-              player2User.recordGameResult(player2GameData);
-              player2User.markModified('gameHistory');
-              player2User.markModified('playerData');
-              
-              await player2User.save();
-              console.log(`✅ [Multiplayer] Player2 ${match.player2.username} game history saved - now has ${player2User.gameHistory.length} games`);
-            } else {
-              console.error(`❌ [Multiplayer] Player2 user ${match.player2.username} (${match.player2.userId}) not found in database!`);
-            }
-            
+            ratingServiceResult = 'draw';
+          } else if (winnerColor === 'white') {
+            ratingServiceResult = 'player1_win'; // Player1 (white) wins
           } else {
-            // Win/loss scenario - same logic with fallback
-            let winnerUser = null;
-            if (winner.userId) {
-              winnerUser = await User.findById(winner.userId);
-            } else {
-              console.log(`⚠️ [Multiplayer] Winner has no userId, trying to find by username: ${winner.username}`);
-              winnerUser = await User.findOne({ username: winner.username });
-            }
-            
-            if (winnerUser) {
-              console.log(`🔍 [Multiplayer] Found winner user: ${winnerUser.username}, current games: ${winnerUser.gameHistory.length}`);
-              
-              const winnerGameData = {
-                gameId,
-                gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
-                opponent: loser.username,
-                result: 'win',
-                duration: matchDuration,
-                movesPlayed: match.moveCount || 0,
-                moves: match.moveHistory || [], // Include detailed moves for preview
-                coinsEarned: 250, // Multiplayer win reward
-                energySpent: 1,
-                levelId: null,
-                stars: null,
-                playerColor: (match.player1.userId === winner.userId || match.player1.username === winner.username) ? 'white' : 'black',
-                endReason: reason
-              };
-              
-              console.log(`📝 [Multiplayer] Recording win for ${winnerUser.username}:`, JSON.stringify(winnerGameData, null, 2));
-              
-              winnerUser.recordGameResult(winnerGameData);
-              winnerUser.markModified('gameHistory');
-              winnerUser.markModified('playerData');
-              
-              await winnerUser.save();
-              console.log(`✅ [Multiplayer] Winner ${winner.username} game history saved - now has ${winnerUser.gameHistory.length} games`);
-            } else {
-              console.error(`❌ [Multiplayer] Winner user ${winner.username} (${winner.userId}) not found in database!`);
-            }
-            
-            let loserUser = null;
-            if (loser.userId) {
-              loserUser = await User.findById(loser.userId);
-            } else {
-              console.log(`⚠️ [Multiplayer] Loser has no userId, trying to find by username: ${loser.username}`);
-              loserUser = await User.findOne({ username: loser.username });
-            }
-            
-            if (loserUser) {
-              console.log(`🔍 [Multiplayer] Found loser user: ${loserUser.username}, current games: ${loserUser.gameHistory.length}`);
-              
-              const loserGameData = {
-                gameId,
-                gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
-                opponent: winner.username,
-                result: 'loss',
-                duration: matchDuration,
-                movesPlayed: match.moveCount || 0,
-                moves: match.moveHistory || [], // Include detailed moves for preview
-                coinsEarned: 0, // No coins for losing
-                energySpent: 1,
-                levelId: null,
-                stars: null,
-                playerColor: (match.player1.userId === loser.userId || match.player1.username === loser.username) ? 'white' : 'black',
-                endReason: reason
-              };
-              
-              console.log(`📝 [Multiplayer] Recording loss for ${loserUser.username}:`, JSON.stringify(loserGameData, null, 2));
-              
-              loserUser.recordGameResult(loserGameData);
-              loserUser.markModified('gameHistory');
-              loserUser.markModified('playerData');
-              
-              await loserUser.save();
-              console.log(`✅ [Multiplayer] Loser ${loser.username} game history saved - now has ${loserUser.gameHistory.length} games`);
-            } else {
-              console.error(`❌ [Multiplayer] Loser user ${loser.username} (${loser.userId}) not found in database!`);
-            }
+            ratingServiceResult = 'player2_win'; // Player2 (black) wins
           }
           
-          console.log(`💾 [Multiplayer] Natural game end results saved to database`);
+          console.log(`🎯 [Multiplayer] Processing ${match.gameMode} game with rating service:`);
+          console.log(`🎯 [Multiplayer] Players: ${player1Data.username} (${player1Data.rating}) vs ${player2Data.username} (${player2Data.rating})`);
+          console.log(`🎯 [Multiplayer] Result: ${ratingServiceResult}`);
+          console.log(`🔧 [DEBUG] About to call rating service method...`);
           
-        } catch (dbErr) {
-          console.error('❌ [Multiplayer] Error saving natural game end results to database:', dbErr);
+          // Process game result based on game mode
+          let ratingResult;
+          if (match.gameMode === 'competitive') {
+            console.log(`🔧 [DEBUG] Calling processCompetitiveGameResult...`);
+            ratingResult = await multiplayerRatingService.processCompetitiveGameResult(
+              player1Data,
+              player2Data,
+              ratingServiceResult,
+              gameData
+            );
+            console.log(`✅ [Multiplayer] Competitive game processed with rating changes:`, ratingResult);
+          } else {
+            console.log(`🔧 [DEBUG] Calling processUnrankedGameResult...`);
+            ratingResult = await multiplayerRatingService.processUnrankedGameResult(
+              player1Data,
+              player2Data,
+              ratingServiceResult,
+              gameData
+            );
+            console.log(`✅ [Multiplayer] Unranked game processed (no rating changes):`, ratingResult);
+          }
+          
+          // Log final results
+          console.log(`📊 [Multiplayer] Game processing completed successfully!`);
+          if (ratingResult.isUpset) {
+            console.log(`🎉 [Multiplayer] UPSET VICTORY! Rating changes were doubled!`);
+          }
+          
+        } catch (error) {
+          console.error('❌ [Multiplayer] Error processing game with rating service:', error);
+          console.error('❌ [DEBUG] Error stack trace:', error.stack);
+          console.error('❌ [DEBUG] Error name:', error.name);
+          console.error('❌ [DEBUG] Error message:', error.message);
+          console.log('⚠️ [DEBUG] Falling back to manual system...');
+          // Fallback to old manual system if rating service fails
+          await handleMultiplayerGameFallback(match, result, winnerColor, reason, matchDuration);
         }
       } else {
-        console.warn(`⚠️ [Multiplayer] No userIds available for either player - cannot save to database`);
-        console.warn(`⚠️ [Multiplayer] Player1: ${match.player1.username} (${match.player1.userId}), Player2: ${match.player2.username} (${match.player2.userId})`);
+        console.warn('⚠️ [Multiplayer] No user IDs available - game results will not be saved');
       }
       
       // Notify both players of game end
@@ -940,122 +868,115 @@ io.on('connection', (socket) => {
       const isPlayer1Leaving = match.player1.socketId === leavingPlayerSocketId;
       const winner = isPlayer1Leaving ? match.player2 : match.player1;
       const loser = isPlayer1Leaving ? match.player1 : match.player2;
+      const winnerColor = isPlayer1Leaving ? 'black' : 'white'; // Player1 is always white
+      const result = 'win'; // The leaving player loses
       
       console.log(`👑 [Multiplayer] Winner: ${winner.username} (${winner.userId})`);
       console.log(`💔 [Multiplayer] Loser: ${loser.username} (${loser.userId}) - ${reason}`);
       
+      // Declare rating result outside the scope for later use
+      let ratingResult = null;
+      
+      // *** USE THE RATING SERVICE INSTEAD OF OLD MANUAL SYSTEM ***
       // Save match results to database - handle cases where some players might not have userId
-      if (winner.userId || loser.userId) {
+      if (match.player1.userId || match.player2.userId) {
         try {
+          console.log(`🔧 [DEBUG] About to require User and multiplayerRatingService...`);
           const User = require('./models/User');
+          const multiplayerRatingService = require('./services/multiplayerRatingService');
+          console.log(`✅ [DEBUG] Successfully imported User and multiplayerRatingService`);
           
           // Create detailed game history entries for both players
           const gameId = `multiplayer_${matchId}_${Date.now()}`;
           const matchDuration = match.startTime ? Date.now() - match.startTime : 0;
           
           console.log(`⏱️ [Multiplayer] Match duration calculation: ${Date.now()} - ${match.startTime} = ${matchDuration}ms`);
+          console.log(`🔧 [DEBUG] About to prepare player data...`);
           
-          // Save winner's game history - try by userId first, then fallback to username
-          let winnerUser = null;
-          if (winner.userId) {
-            winnerUser = await User.findById(winner.userId);
+          // Prepare player data for rating service
+          const player1Data = {
+            userId: match.player1.userId,
+            username: match.player1.username,
+            rating: match.player1.rating || 1200 // Use stored rating or default
+          };
+          
+          const player2Data = {
+            userId: match.player2.userId,
+            username: match.player2.username,
+            rating: match.player2.rating || 1200 // Use stored rating or default
+          };
+          
+          // Prepare game data
+          const gameData = {
+            gameId,
+            duration: matchDuration,
+            movesPlayed: match.moveCount || 0,
+            moves: match.moveHistory || [],
+            coinsEarned: result === 'draw' ? 50 : 250, // Draw: 50 coins, Win: 250 coins
+            energySpent: 1,
+            endReason: reason,
+            player1Color: 'white', // Player1 is always white
+            player2Color: 'black'  // Player2 is always black
+          };
+          
+          // Determine result format for rating service
+          let ratingServiceResult;
+          if (result === 'draw') {
+            ratingServiceResult = 'draw';
+          } else if (winnerColor === 'white') {
+            ratingServiceResult = 'player1_win'; // Player1 (white) wins
           } else {
-            console.log(`⚠️ [Multiplayer] Winner has no userId, trying to find by username: ${winner.username}`);
-            winnerUser = await User.findOne({ username: winner.username });
+            ratingServiceResult = 'player2_win'; // Player2 (black) wins
           }
           
-          if (winnerUser) {
-            console.log(`🔍 [Multiplayer] Found winner user: ${winnerUser.username}, current games: ${winnerUser.gameHistory.length}`);
-            
-            const winnerGameData = {
-              gameId,
-              gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
-              opponent: loser.username,
-              result: 'win',
-              duration: matchDuration,
-              movesPlayed: match.moveCount || 0,
-              moves: match.moveHistory || [], // Include detailed moves for preview
-              coinsEarned: 250, // Multiplayer win reward
-              energySpent: 1,
-              levelId: null,
-              stars: null,
-              playerColor: match.player1.userId === winner.userId || match.player1.username === winner.username ? 'white' : 'black',
-              endReason: reason
-            };
-            
-            console.log(`📝 [Multiplayer] Recording win for ${winnerUser.username}:`, JSON.stringify(winnerGameData, null, 2));
-            
-            winnerUser.recordGameResult(winnerGameData);
-            winnerUser.markModified('gameHistory');
-            winnerUser.markModified('playerData');
-            
-            try {
-              await winnerUser.save();
-              console.log(`✅ [Multiplayer] Winner ${winner.username} game history saved - now has ${winnerUser.gameHistory.length} games`);
-            } catch (saveError) {
-              console.error(`❌ [Multiplayer] Error saving winner user:`, saveError);
-              throw saveError;
-            }
+          console.log(`🎯 [Multiplayer] Processing ${match.gameMode} game with rating service:`);
+          console.log(`🎯 [Multiplayer] Players: ${player1Data.username} (${player1Data.rating}) vs ${player2Data.username} (${player2Data.rating})`);
+          console.log(`🎯 [Multiplayer] Result: ${ratingServiceResult}`);
+          console.log(`🔧 [DEBUG] About to call rating service method...`);
+          
+          // Process game result based on game mode
+          let ratingResult;
+          if (match.gameMode === 'competitive') {
+            console.log(`🔧 [DEBUG] Calling processCompetitiveGameResult...`);
+            ratingResult = await multiplayerRatingService.processCompetitiveGameResult(
+              player1Data,
+              player2Data,
+              ratingServiceResult,
+              gameData
+            );
+            console.log(`✅ [Multiplayer] Competitive game processed with rating changes:`, ratingResult);
           } else {
-            console.error(`❌ [Multiplayer] Winner user ${winner.username} (${winner.userId}) not found in database!`);
+            console.log(`🔧 [DEBUG] Calling processUnrankedGameResult...`);
+            ratingResult = await multiplayerRatingService.processUnrankedGameResult(
+              player1Data,
+              player2Data,
+              ratingServiceResult,
+              gameData
+            );
+            console.log(`✅ [Multiplayer] Unranked game processed (no rating changes):`, ratingResult);
           }
           
-          // Save loser's game history - try by userId first, then fallback to username
-          let loserUser = null;
-          if (loser.userId) {
-            loserUser = await User.findById(loser.userId);
-          } else {
-            console.log(`⚠️ [Multiplayer] Loser has no userId, trying to find by username: ${loser.username}`);
-            loserUser = await User.findOne({ username: loser.username });
+          // Log final results
+          console.log(`📊 [Multiplayer] Game processing completed successfully!`);
+          if (ratingResult.isUpset) {
+            console.log(`🎉 [Multiplayer] UPSET VICTORY! Rating changes were doubled!`);
           }
           
-          if (loserUser) {
-            console.log(`🔍 [Multiplayer] Found loser user: ${loserUser.username}, current games: ${loserUser.gameHistory.length}`);
-            
-            const loserGameData = {
-              gameId,
-              gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
-              opponent: winner.username,
-              result: 'loss',
-              duration: matchDuration,
-              movesPlayed: match.moveCount || 0,
-              moves: match.moveHistory || [], // Include detailed moves for preview
-              coinsEarned: 0, // No coins for losing
-              energySpent: 1,
-              levelId: null,
-              stars: null,
-              playerColor: match.player1.userId === loser.userId || match.player1.username === loser.username ? 'white' : 'black',
-              endReason: reason
-            };
-            
-            console.log(`📝 [Multiplayer] Recording loss for ${loserUser.username}:`, JSON.stringify(loserGameData, null, 2));
-            
-            loserUser.recordGameResult(loserGameData);
-            loserUser.markModified('gameHistory');
-            loserUser.markModified('playerData');
-            
-            try {
-              await loserUser.save();
-              console.log(`✅ [Multiplayer] Loser ${loser.username} game history saved - now has ${loserUser.gameHistory.length} games`);
-            } catch (saveError) {
-              console.error(`❌ [Multiplayer] Error saving loser user:`, saveError);
-              throw saveError;
-            }
-          } else {
-            console.error(`❌ [Multiplayer] Loser user ${loser.username} (${loser.userId}) not found in database!`);
-          }
-          
-          console.log(`💾 [Multiplayer] Match results and game history saved to database`);
-          
-        } catch (dbErr) {
-          console.error('❌ [Multiplayer] Error saving match results to database:', dbErr);
+        } catch (error) {
+          console.error('❌ [Multiplayer] Error processing game with rating service:', error);
+          console.error('❌ [DEBUG] Error stack trace:', error.stack);
+          console.error('❌ [DEBUG] Error name:', error.name);
+          console.error('❌ [DEBUG] Error message:', error.message);
+          console.log('⚠️ [DEBUG] Falling back to manual system...');
+          // Fallback to old manual system if rating service fails
+          await handleMultiplayerGameFallback(match, result, winnerColor, reason, matchDuration);
         }
       } else {
-        console.warn(`⚠️ [Multiplayer] No userIds available for either player - cannot save to database`);
-        console.warn(`⚠️ [Multiplayer] Winner: ${winner.username} (${winner.userId}), Loser: ${loser.username} (${loser.userId})`);
+        console.warn('⚠️ [Multiplayer] No user IDs available - game results will not be saved');
       }
       
       // Notify both players of game end
+      console.log(`🔍 [DEBUG] About to send game-end notifications. ratingResult:`, JSON.stringify(ratingResult, null, 2));
       const gameEndData = {
         matchId,
         reason,
@@ -1067,7 +988,9 @@ io.on('connection', (socket) => {
           username: loser.username,  
           userId: loser.userId,
           reason
-        }
+        },
+        // Include rating information if available
+        ratingData: ratingResult || null
       };
       
       // Send win message to winner
@@ -1242,90 +1165,135 @@ function tryMatchmaking(gameMode) {
   }
 
   const players = Array.from(queue.values());
-  console.log(`🎮 [Matchmaking] Available players:`, players.map(p => p.player.username));
+  console.log(`🎮 [Matchmaking] Available players:`, players.map(p => `${p.player.username} (${p.player.rating || 'no rating'})`));
   
-  // Simple FIFO matchmaking (can be enhanced with rating-based matching later)
-  for (let i = 0; i < players.length - 1; i++) {
-    const player1 = players[i];
-    const player2 = players[i + 1];
+  let bestMatch = null;
+  let bestRatingDifference = Infinity;
+  
+  if (gameMode === 'competitive') {
+    // Rating-based matchmaking for competitive games
+    for (let i = 0; i < players.length - 1; i++) {
+      for (let j = i + 1; j < players.length; j++) {
+        const player1 = players[i];
+        const player2 = players[j];
+        
+        const rating1 = player1.player.rating || 1200;
+        const rating2 = player2.player.rating || 1200;
+        const ratingDifference = Math.abs(rating1 - rating2);
+        
+        console.log(`🎯 [Matchmaking] Checking match: ${player1.player.username} (${rating1}) vs ${player2.player.username} (${rating2}), diff: ${ratingDifference}`);
+        
+        // Check if both players are still online
+        if (!onlinePlayers.has(player1.socketId) || !onlinePlayers.has(player2.socketId)) {
+          console.warn(`⚠️ [Matchmaking] One or both players not online anymore`);
+          continue;
+        }
+        
+        // Find the closest rating match within acceptable range
+        const maxDifference = player1.ratingRange || 200;
+        if (ratingDifference <= maxDifference && ratingDifference < bestRatingDifference) {
+          bestMatch = { player1, player2 };
+          bestRatingDifference = ratingDifference;
+        }
+      }
+    }
     
-    console.log(`🤝 [Matchmaking] Attempting to match ${player1.player.username} vs ${player2.player.username}`);
+    if (!bestMatch) {
+      console.log(`⏳ [Matchmaking] No suitable rating matches found in competitive queue`);
+      return;
+    }
+    
+    console.log(`🎯 [Matchmaking] Best match found: ${bestMatch.player1.player.username} (${bestMatch.player1.player.rating}) vs ${bestMatch.player2.player.username} (${bestMatch.player2.player.rating}), diff: ${bestRatingDifference}`);
+    
+  } else {
+    // Simple FIFO matchmaking for unranked games
+    const player1 = players[0];
+    const player2 = players[1];
     
     // Check if both players are still online
     if (!onlinePlayers.has(player1.socketId) || !onlinePlayers.has(player2.socketId)) {
       console.warn(`⚠️ [Matchmaking] One or both players not online anymore`);
-      continue;
+      return;
     }
-
-    // Create match
-    const matchId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const match = {
-      matchId,
-      gameMode,
-      player1: { ...player1.player, socketId: player1.socketId },
-      player2: { ...player2.player, socketId: player2.socketId },
-      startTime: Date.now(),
-      moveCount: 0,
-      status: 'starting'
-    };
-
-    activeMatches.set(matchId, match);
-    console.log(`✨ [Matchmaking] Created match ${matchId}`);
-
-    // Remove players from queue
-    const removed1 = queue.delete(player1.socketId);
-    const removed2 = queue.delete(player2.socketId);
-    console.log(`🗑️ [Matchmaking] Removed players from queue: ${removed1 && removed2}`);
-
-    // Update player statuses
-    const p1 = onlinePlayers.get(player1.socketId);
-    const p2 = onlinePlayers.get(player2.socketId);
-    if (p1) {
-      p1.status = 'in-game';
-      onlinePlayers.set(player1.socketId, p1);
-      console.log(`🔄 [Matchmaking] Updated ${p1.username} status to in-game`);
-    }
-    if (p2) {
-      p2.status = 'in-game';
-      onlinePlayers.set(player2.socketId, p2);
-      console.log(`🔄 [Matchmaking] Updated ${p2.username} status to in-game`);
-    }
-
-    console.log(`🎮 [Matchmaking] Match created: ${matchId} - ${player1.player.username} vs ${player2.player.username} (${gameMode})`);
-
-    // Notify players
-    const matchData1 = {
-      matchId,
-      opponent: player2.player,
-      gameMode,
-      playerColor: 'white',
-      // Add more game setup info
-      birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
-      pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
-    };
-    const matchData2 = {
-      matchId,
-      opponent: player1.player,
-      gameMode,
-      playerColor: 'black',
-      // Add more game setup info
-      birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
-      pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
-    };
-
-    console.log(`📤 [Matchmaking] Sending match-found to ${player1.player.username} (white):`, matchData1);
-    console.log(`📤 [Matchmaking] Sending match-found to ${player2.player.username} (black):`, matchData2);
-
-    io.to(player1.socketId).emit('multiplayer:match-found', matchData1);
-    io.to(player2.socketId).emit('multiplayer:match-found', matchData2);
-
-    // Broadcast updated presence and queue stats
-    io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
-    broadcastQueueStats();
-
-    console.log(`✅ [Matchmaking] Match ${matchId} setup complete`);
-    break; // Only create one match per call
+    
+    bestMatch = { player1, player2 };
+    console.log(`🤝 [Matchmaking] FIFO match: ${player1.player.username} vs ${player2.player.username}`);
   }
+  
+  const { player1, player2 } = bestMatch;
+
+  // Create match
+  const matchId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const match = {
+    matchId,
+    gameMode,
+    player1: { ...player1.player, socketId: player1.socketId },
+    player2: { ...player2.player, socketId: player2.socketId },
+    startTime: new Date(),
+    moveCount: 0,
+    moveHistory: [],
+    status: 'starting'
+  };
+
+  activeMatches.set(matchId, match);
+  console.log(`✨ [Matchmaking] Created match ${matchId}`);
+
+  // Remove players from queue
+  const removed1 = queue.delete(player1.socketId);
+  const removed2 = queue.delete(player2.socketId);
+  console.log(`🗑️ [Matchmaking] Removed players from queue: ${removed1 && removed2}`);
+
+  // Update player statuses
+  const p1 = onlinePlayers.get(player1.socketId);
+  const p2 = onlinePlayers.get(player2.socketId);
+  if (p1) {
+    p1.status = 'in-game';
+    onlinePlayers.set(player1.socketId, p1);
+    console.log(`🔄 [Matchmaking] Updated ${p1.username} status to in-game`);
+  }
+  if (p2) {
+    p2.status = 'in-game';
+    onlinePlayers.set(player2.socketId, p2);
+    console.log(`🔄 [Matchmaking] Updated ${p2.username} status to in-game`);
+  }
+
+  console.log(`🎮 [Matchmaking] Match created: ${matchId} - ${player1.player.username} vs ${player2.player.username} (${gameMode})`);
+
+  // Notify players with rating information
+  const matchData1 = {
+    matchId,
+    opponent: player2.player,
+    gameMode,
+    playerColor: 'white',
+    yourRating: player1.player.rating || 1200,
+    opponentRating: player2.player.rating || 1200,
+    // Add more game setup info
+    birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
+    pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
+  };
+  const matchData2 = {
+    matchId,
+    opponent: player1.player,
+    gameMode,
+    playerColor: 'black',
+    yourRating: player2.player.rating || 1200,
+    opponentRating: player1.player.rating || 1200,
+    // Add more game setup info
+    birdPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
+    pigPieces: { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
+  };
+
+  console.log(`📤 [Matchmaking] Sending match-found to ${player1.player.username} (white):`, matchData1);
+  console.log(`📤 [Matchmaking] Sending match-found to ${player2.player.username} (black):`, matchData2);
+
+  io.to(player1.socketId).emit('multiplayer:match-found', matchData1);
+  io.to(player2.socketId).emit('multiplayer:match-found', matchData2);
+
+  // Broadcast updated presence and queue stats
+  io.emit('multiplayer:online-players', Array.from(onlinePlayers.values()));
+  broadcastQueueStats();
+
+  console.log(`✅ [Matchmaking] Match ${matchId} setup complete`);
 }
 
 // Connect to MongoDB
@@ -1353,6 +1321,121 @@ app.get('/api/socket/status', (req, res) => {
     activeMatches: activeMatches.size
   });
 });
+
+// Fallback handler for multiplayer games when rating service fails
+async function handleMultiplayerGameFallback(match, result, winnerColor, reason, matchDuration) {
+  console.log('⚠️ [Multiplayer] Using fallback game processing...');
+  
+  try {
+    const User = require('./models/User');
+    const gameId = `multiplayer_fallback_${match.matchId}_${Date.now()}`;
+    
+    let winner, loser;
+    
+    if (result === 'draw') {
+      // Both players get draw results
+      const [player1User, player2User] = await Promise.all([
+        User.findById(match.player1.userId),
+        User.findById(match.player2.userId)
+      ]);
+      
+      if (player1User) {
+        const player1GameData = {
+          gameId,
+          gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
+          opponent: match.player2.username,
+          result: 'draw',
+          duration: matchDuration,
+          movesPlayed: match.moveCount || 0,
+          moves: match.moveHistory || [],
+          coinsEarned: 50,
+          energySpent: 1,
+          playerColor: 'white',
+          endReason: reason
+        };
+        
+        player1User.recordGameResult(player1GameData);
+        await player1User.save();
+      }
+      
+      if (player2User) {
+        const player2GameData = {
+          gameId,
+          gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
+          opponent: match.player1.username,
+          result: 'draw',
+          duration: matchDuration,
+          movesPlayed: match.moveCount || 0,
+          moves: match.moveHistory || [],
+          coinsEarned: 50,
+          energySpent: 1,
+          playerColor: 'black',
+          endReason: reason
+        };
+        
+        player2User.recordGameResult(player2GameData);
+        await player2User.save();
+      }
+      
+    } else {
+      // Win/loss scenario
+      if (winnerColor === 'white') {
+        winner = match.player1;
+        loser = match.player2;
+      } else {
+        winner = match.player2;
+        loser = match.player1;
+      }
+      
+      const [winnerUser, loserUser] = await Promise.all([
+        User.findById(winner.userId),
+        User.findById(loser.userId)
+      ]);
+      
+      if (winnerUser) {
+        const winnerGameData = {
+          gameId,
+          gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
+          opponent: loser.username,
+          result: 'win',
+          duration: matchDuration,
+          movesPlayed: match.moveCount || 0,
+          moves: match.moveHistory || [],
+          coinsEarned: 250,
+          energySpent: 1,
+          playerColor: (match.player1.userId === winner.userId) ? 'white' : 'black',
+          endReason: reason
+        };
+        
+        winnerUser.recordGameResult(winnerGameData);
+        await winnerUser.save();
+      }
+      
+      if (loserUser) {
+        const loserGameData = {
+          gameId,
+          gameType: match.gameMode === 'competitive' ? 'multiplayer_competitive' : 'multiplayer_unranked',
+          opponent: winner.username,
+          result: 'loss',
+          duration: matchDuration,
+          movesPlayed: match.moveCount || 0,
+          moves: match.moveHistory || [],
+          coinsEarned: 0,
+          energySpent: 1,
+          playerColor: (match.player1.userId === loser.userId) ? 'white' : 'black',
+          endReason: reason
+        };
+        
+        loserUser.recordGameResult(loserGameData);
+        await loserUser.save();
+      }
+    }
+    
+    console.log('✅ [Multiplayer] Fallback game processing completed');
+  } catch (error) {
+    console.error('❌ [Multiplayer] Fallback game processing failed:', error);
+  }
+}
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

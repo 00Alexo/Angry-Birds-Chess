@@ -63,21 +63,35 @@ const userSchema = new mongoose.Schema({
       deals: [mongoose.Schema.Types.Mixed]
     }
   },
+  // Elo Rating System
+  rating: {
+    competitive: { type: Number, default: 1200 }, // Starting rating for competitive matches
+    current: { type: Number, default: 1200 },     // Alias for competitive rating (for backward compatibility)
+    peak: { type: Number, default: 1200 },        // Highest rating ever achieved
+    gamesPlayed: { type: Number, default: 0 },    // Total competitive games played
+    lastUpdated: { type: Date, default: Date.now } // When rating was last updated
+  },
   gameHistory: [{
     gameId: { type: String, required: true },
     gameType: { type: String, enum: ['campaign', 'vs-ai', 'vs-player', 'multiplayer', 'multiplayer_competitive', 'multiplayer_unranked'], required: true },
     opponent: { type: String }, // AI difficulty or player username
+    opponentRating: { type: Number }, // Opponent's rating (for competitive games)
     result: { type: String, enum: ['win', 'loss', 'draw', 'in-progress'], required: true },
     duration: { type: Number }, // game duration in milliseconds
     movesPlayed: { type: Number, default: 0 },
-  // Detailed move list (optional). Each move can store from/to squares, piece, capture, special flags.
-  moves: [mongoose.Schema.Types.Mixed],
+    // Detailed move list (optional). Each move can store from/to squares, piece, capture, special flags.
+    moves: [mongoose.Schema.Types.Mixed],
     coinsEarned: { type: Number, default: 0 },
     energySpent: { type: Number, default: 1 },
     levelId: { type: String }, // for campaign games
     stars: { type: Number, min: 0, max: 3 }, // for campaign games
     playerColor: { type: String, enum: ['white', 'black'] },
     endReason: { type: String }, // 'checkmate', 'timeout', 'resignation', 'draw-agreement', etc.
+    // Rating system fields (for competitive multiplayer games)
+    ratingBefore: { type: Number }, // Player's rating before this game
+    ratingAfter: { type: Number },  // Player's rating after this game
+    ratingChange: { type: Number, default: 0 }, // Change in rating (+/-)
+    isUpset: { type: Boolean, default: false }, // Was this an upset victory?
     createdAt: { type: Date, default: Date.now }
   }],
   campaignProgress: [{
@@ -156,12 +170,53 @@ userSchema.methods.getTimeUntilNextEnergy = function() {
   return timeUntilNext;
 };
 
+// Instance method to update rating after a competitive game
+userSchema.methods.updateRating = function(newRating, ratingChange, isUpset = false) {
+  console.log(`📊 [Rating] Updating rating for ${this.username}: ${this.rating.competitive} -> ${newRating} (${ratingChange >= 0 ? '+' : ''}${ratingChange})`);
+  
+  this.rating.competitive = Math.round(newRating * 100) / 100; // Round to 2 decimal places
+  this.rating.current = this.rating.competitive; // Keep current as alias
+  this.rating.peak = Math.max(this.rating.peak, this.rating.competitive);
+  this.rating.gamesPlayed++;
+  this.rating.lastUpdated = new Date();
+  
+  console.log(`✅ [Rating] Rating updated. New: ${this.rating.competitive}, Peak: ${this.rating.peak}, Games: ${this.rating.gamesPlayed}`);
+  
+  return {
+    newRating: this.rating.competitive,
+    peakRating: this.rating.peak,
+    gamesPlayed: this.rating.gamesPlayed,
+    ratingChange: Math.round(ratingChange * 100) / 100,
+    isUpset
+  };
+};
+
+// Instance method to get current competitive rating
+userSchema.methods.getCompetitiveRating = function() {
+  return this.rating?.competitive || 1200;
+};
+
+// Instance method to get rating statistics
+userSchema.methods.getRatingStats = function() {
+  const { EloRatingSystem } = require('../utils/eloRating');
+  const eloSystem = new EloRatingSystem();
+  
+  return {
+    current: this.rating?.competitive || 1200,
+    peak: this.rating?.peak || 1200,
+    gamesPlayed: this.rating?.gamesPlayed || 0,
+    rank: eloSystem.getRank(this.rating?.competitive || 1200),
+    lastUpdated: this.rating?.lastUpdated || this.createdAt
+  };
+};
+
 // Instance method to record a game result and update statistics
 userSchema.methods.recordGameResult = function(gameData) {
   const {
     gameId,
     gameType,
     opponent,
+    opponentRating,
     result,
     duration,
     movesPlayed = 0,
@@ -171,7 +226,11 @@ userSchema.methods.recordGameResult = function(gameData) {
     levelId,
     stars,
     playerColor,
-    endReason
+    endReason,
+    ratingBefore,
+    ratingAfter,
+    ratingChange = 0,
+    isUpset = false
   } = gameData;
 
   // Add to game history
@@ -179,6 +238,7 @@ userSchema.methods.recordGameResult = function(gameData) {
     gameId: gameId || new Date().getTime().toString(),
     gameType,
     opponent,
+    opponentRating,
     result,
     duration,
     movesPlayed,
@@ -189,11 +249,20 @@ userSchema.methods.recordGameResult = function(gameData) {
     stars,
     playerColor,
     endReason,
+    ratingBefore,
+    ratingAfter,
+    ratingChange,
+    isUpset,
     createdAt: new Date()
   };
   
   console.log(`📝 [User] Recording game result with ${Array.isArray(moves) ? moves.length : 0} moves`);
   console.log(`🎯 [User] Sample moves:`, Array.isArray(moves) && moves.length > 0 ? JSON.stringify(moves.slice(0, 2), null, 2) : 'none');
+  
+  // Log rating information for competitive games
+  if (gameType === 'multiplayer_competitive' && ratingChange !== undefined) {
+    console.log(`📊 [User] Rating change recorded: ${ratingBefore} -> ${ratingAfter} (${ratingChange >= 0 ? '+' : ''}${ratingChange}) ${isUpset ? '[UPSET!]' : ''}`);
+  }
   
   this.gameHistory.push(gameEntry);
 

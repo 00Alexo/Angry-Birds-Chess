@@ -28,10 +28,67 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
   const [gameEndData, setGameEndData] = useState(null); // For showing game end modal
   const [myTimer, setMyTimer] = useState(60); // MY timer - only counts when it's my turn
   const [gameEnded, setGameEnded] = useState(false);
+  const [eloOutcomes, setEloOutcomes] = useState(null); // Pre-calculated Elo changes for all outcomes
   
   // Premove system
   const [premove, setPremove] = useState(null); // Stores premove data
   const [premoveHighlight, setPremoveHighlight] = useState(null); // Visual highlight for premove
+
+  // Calculate Elo outcomes for all possible results
+  const calculateEloOutcomes = (myRating, opponentRating) => {
+    const K = 20; // Elo K-factor
+    const M = 2;  // Upset multiplier
+
+    const calculateEloChange = (myRating, opponentRating, result, isUpset = false) => {
+      const expectedScore = 1 / (1 + Math.pow(10, (opponentRating - myRating) / 400));
+      let actualScore;
+      
+      if (result === 'win') actualScore = 1;
+      else if (result === 'draw') actualScore = 0.5;
+      else actualScore = 0; // loss
+      
+      let change = K * (actualScore - expectedScore);
+      
+      // Apply upset multiplier if it's an upset victory
+      if (isUpset && result === 'win') {
+        change *= M;
+      }
+      
+      return Math.round(change * 100) / 100; // Round to 2 decimals
+    };
+
+    // Determine if outcomes would be upsets (lower rated player wins)
+    const isWinUpset = myRating < opponentRating;
+    const isLossUpset = false; // Losing is never an upset
+    
+    const winChange = calculateEloChange(myRating, opponentRating, 'win', isWinUpset);
+    const lossChange = calculateEloChange(myRating, opponentRating, 'loss', isLossUpset);
+    const drawChange = calculateEloChange(myRating, opponentRating, 'draw', false);
+
+    // Helper to format rating to max 6 digits
+    const formatRating = (rating) => {
+      return Math.round(rating * 100) / 100; // Round to 2 decimals max
+    };
+
+    return {
+      currentRating: formatRating(myRating),
+      win: {
+        newRating: formatRating(myRating + winChange),
+        change: winChange,
+        isUpset: isWinUpset
+      },
+      loss: {
+        newRating: formatRating(myRating + lossChange),
+        change: lossChange,
+        isUpset: false
+      },
+      draw: {
+        newRating: formatRating(myRating + drawChange),
+        change: drawChange,
+        isUpset: false
+      }
+    };
+  };
 
   // Initialize board when component mounts
   useEffect(() => {
@@ -44,6 +101,21 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
       setCurrentPlayer('white'); // White always starts
       initializeBoard();
       setupMultiplayerListeners();
+      
+      // Calculate Elo outcomes for this match
+      if (matchData.gameMode === 'competitive' && matchData.yourRating && matchData.opponentRating) {
+        console.log('🏆 [MultiplayerChess] Calculating Elo outcomes...');
+        console.log('🏆 [MultiplayerChess] My rating:', matchData.yourRating, 'Opponent rating:', matchData.opponentRating);
+        
+        const outcomes = calculateEloOutcomes(matchData.yourRating, matchData.opponentRating);
+        setEloOutcomes(outcomes);
+        
+        console.log('🏆 [MultiplayerChess] Elo outcomes calculated:', outcomes);
+      } else {
+        console.log('⚠️ [MultiplayerChess] Not a competitive game or missing rating data');
+        console.log('⚠️ [DEBUG] gameMode:', matchData.gameMode, 'yourRating:', matchData.yourRating, 'opponentRating:', matchData.opponentRating);
+        setEloOutcomes(null);
+      }
     }
 
     return () => {
@@ -254,6 +326,13 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
       console.log('🏁 [MultiplayerChess] ===== GAME END EVENT TRIGGERED =====');
       console.log('🏁 [MultiplayerChess] Result:', result, 'Reason:', reason);
       console.log('🏁 [MultiplayerChess] Full data:', JSON.stringify(data, null, 2));
+      console.log('🔍 [MultiplayerChess] Rating data specifically:', JSON.stringify(data.ratingData, null, 2));
+      
+      // Refresh user rating after game ends (for competitive games)
+      if (window.refreshMultiplayerRating) {
+        console.log('🏁 [MultiplayerChess] Refreshing user rating after game end');
+        window.refreshMultiplayerRating();
+      }
       
       // Show game end modal with details
       setGameEndData({
@@ -261,7 +340,8 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
         reason,
         winner: data.winner,
         loser: data.loser,
-        matchId: data.matchId
+        matchId: data.matchId,
+        ratingData: data.ratingData || null
       });
     });
 
@@ -272,6 +352,12 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
       console.log('⏰ [MultiplayerChess] My color:', myColor);
       console.log('⏰ [MultiplayerChess] Winner from event:', data.winner);
       console.log('⏰ [MultiplayerChess] Am I the winner?', data.winner === myColor);
+      
+      // Refresh user rating after timeout (for competitive games)
+      if (window.refreshMultiplayerRating) {
+        console.log('⏰ [MultiplayerChess] Refreshing user rating after timeout');
+        window.refreshMultiplayerRating();
+      }
       
       // Stop local timer and end game
       setGameEnded(true);
@@ -837,6 +923,11 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
         console.error('❌ [MultiplayerChess] Failed to send checkmate to backend');
         // Fallback to local game end
         setTimeout(() => {
+          // Refresh rating even in fallback scenario
+          if (window.refreshMultiplayerRating) {
+            console.log('🏁 [MultiplayerChess] Refreshing rating (checkmate fallback)');
+            window.refreshMultiplayerRating();
+          }
           onGameEnd(result);
         }, 2000);
       }
@@ -860,6 +951,11 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
         console.error('❌ [MultiplayerChess] Failed to send stalemate to backend');
         // Fallback to local game end
         setTimeout(() => {
+          // Refresh rating even in fallback scenario
+          if (window.refreshMultiplayerRating) {
+            console.log('🏁 [MultiplayerChess] Refreshing rating (stalemate fallback)');
+            window.refreshMultiplayerRating();
+          }
           onGameEnd('draw');
         }, 2000);
       }
@@ -1063,6 +1159,11 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
                     } else {
                       console.error('❌ [MultiplayerChess] Failed to send resignation');
                       // Fallback to regular game end
+                      // Refresh rating even in fallback scenario
+                      if (window.refreshMultiplayerRating) {
+                        console.log('🏁 [MultiplayerChess] Refreshing rating (resignation fallback)');
+                        window.refreshMultiplayerRating();
+                      }
                       onGameEnd('loss');
                     }
                   }
@@ -1336,26 +1437,38 @@ const MultiplayerChessBoard = ({ matchData, onGameEnd }) => {
               <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 rounded-xl p-4 border border-blue-500/30">
                 <div className="text-center">
                   <div className="text-blue-400 text-sm font-medium mb-2">Elo Rating</div>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-slate-300 text-lg">1200</span>
-                    <span className="text-slate-400">→</span>
-                    <span className={`text-lg font-bold ${
-                      gameEndData.result === 'win' ? 'text-green-400' :
-                      gameEndData.result === 'draw' ? 'text-yellow-400' : 'text-red-400'
-                    }`}>
-                      {gameEndData.result === 'win' ? '1235' :
-                       gameEndData.result === 'draw' ? '1205' : '1175'}
-                    </span>
-                    <span className={`text-sm font-semibold ${
-                      gameEndData.result === 'win' ? 'text-green-400' :
-                      gameEndData.result === 'draw' ? 'text-yellow-400' : 'text-red-400'
-                    }`}>
-                      ({gameEndData.result === 'win' ? '+35' :
-                        gameEndData.result === 'draw' ? '+5' : '-25'})
-                    </span>
-                  </div>
+                  {eloOutcomes && matchData.gameMode === 'competitive' ? (() => {
+                    // Get the appropriate outcome based on game result
+                    const outcome = gameEndData.result === 'win' ? eloOutcomes.win :
+                                    gameEndData.result === 'draw' ? eloOutcomes.draw :
+                                    eloOutcomes.loss;
+                    
+                    const changeDisplay = outcome.change > 0 ? `+${outcome.change}` : `${outcome.change}`;
+                    const changeColor = outcome.change > 0 ? 'text-green-400' : 
+                                      outcome.change < 0 ? 'text-red-400' : 'text-yellow-400';
+                    
+                    return (
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="text-slate-300 text-lg">{eloOutcomes.currentRating}</span>
+                        <span className="text-slate-400">→</span>
+                        <span className={`text-lg font-bold ${changeColor}`}>
+                          {outcome.newRating}
+                        </span>
+                        <span className={`text-sm font-semibold ${changeColor}`}>
+                          ({changeDisplay})
+                        </span>
+                      </div>
+                    );
+                  })() : (
+                    // Fallback for unranked games or when no Elo data available
+                    <div className="flex items-center justify-center gap-2">
+                      <span className="text-slate-300 text-lg">Unranked</span>
+                      <span className="text-slate-400 text-sm">No rating change</span>
+                    </div>
+                  )}
                   <div className="text-xs text-slate-400 mt-1">
-                    {gameEndData.result === 'win' ? 'Great victory!' :
+                    {eloOutcomes?.win?.isUpset && gameEndData.result === 'win' ? 'Upset Victory! Rating doubled!' :
+                     gameEndData.result === 'win' ? 'Great victory!' :
                      gameEndData.result === 'draw' ? 'Solid performance' : 'Better luck next time'}
                   </div>
                 </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   IoArrowBack, IoPeople, IoGameController, IoTime, IoTrophy, 
   IoSearch, IoClose, IoPlay, IoStop, IoSettings,
@@ -6,6 +6,7 @@ import {
   IoStar, IoSkull, IoPerson, IoGlobe, IoEyeOff
 } from 'react-icons/io5';
 import multiplayerSocket from '../services/multiplayerSocket';
+import ratingService from '../services/ratingService';
 
 const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventory }) => {
   const [activeTab, setActiveTab] = useState('queue');
@@ -17,6 +18,7 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
   const [matchFound, setMatchFound] = useState(null);
   const [matchCountdown, setMatchCountdown] = useState(0);
   const [isMatchStarting, setIsMatchStarting] = useState(false);
+  const [userRating, setUserRating] = useState(null); // Add state for user rating
 
   const [onlinePlayers, setOnlinePlayers] = useState([]);
 
@@ -71,6 +73,38 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
     }
   ]);
 
+  // Manual refresh rating method
+  const refreshUserRating = useCallback(async () => {
+    if (!userId) return;
+    
+    console.log('[MultiplayerPage] Manually refreshing user rating');
+    try {
+      const ratingInfo = await ratingService.getRatingInfo();
+      console.log('[MultiplayerPage] Refreshed user rating info:', ratingInfo);
+      setUserRating(ratingInfo);
+      
+      // If connected to socket, update the rating there too
+      if (multiplayerSocket.connected) {
+        console.log('[MultiplayerPage] Updating socket presence with new rating');
+        multiplayerSocket.connect({ 
+          username: userName, 
+          userId: userId, 
+          rating: ratingInfo.current 
+        });
+      }
+    } catch (error) {
+      console.error('[MultiplayerPage] Error refreshing user rating:', error);
+    }
+  }, [userId, userName]);
+
+  // Expose refresh method globally for other components to call
+  useEffect(() => {
+    window.refreshMultiplayerRating = refreshUserRating;
+    return () => {
+      delete window.refreshMultiplayerRating;
+    };
+  }, [refreshUserRating]);
+
   // Function to start the multiplayer game
   const startMultiplayerGame = (matchData) => {
     console.log('[MultiplayerPage] Match countdown finished, starting multiplayer game:', matchData);
@@ -90,7 +124,13 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
       name: `Multiplayer vs ${matchData.opponent.username}`,
       terrain: 'Multiplayer Arena',
       birdPieces: matchData.birdPieces || { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
-      pigPieces: matchData.pigPieces || { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true }
+      pigPieces: matchData.pigPieces || { king: true, pawns: 8, rooks: 2, knights: 2, bishops: 2, queen: true },
+      // Add rating information for display
+      yourRating: matchData.yourRating || userRating?.current || 1200,
+      opponentRating: matchData.opponentRating || matchData.opponent.rating || 1200,
+      winProbability: userRating && matchData.opponentRating 
+        ? ratingService.getWinProbability(userRating.current, matchData.opponentRating)
+        : 50
     };
     
     console.log('[MultiplayerPage] Starting game with levelData:', levelData);
@@ -140,16 +180,61 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
     };
   }, [isMatchStarting, matchCountdown, matchFound]);
 
+  // Fetch user's rating on component mount and when returning from games
+  useEffect(() => {
+    const fetchUserRating = async () => {
+      await refreshUserRating();
+    };
+
+    if (userId) {
+      fetchUserRating();
+    }
+
+    // Refresh rating when user returns from other tabs/games
+    const handleWindowFocus = () => {
+      console.log('[MultiplayerPage] Window focused, refreshing user rating');
+      if (userId) {
+        refreshUserRating();
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    
+    // Also refresh when the page becomes visible (for mobile/tab switching)
+    const handleVisibilityChange = () => {
+      if (!document.hidden && userId) {
+        console.log('[MultiplayerPage] Page became visible, refreshing user rating');
+        refreshUserRating();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [userId, refreshUserRating]);
+
   // Multiplayer socket presence lifecycle
   useEffect(() => {
-    console.log('[MultiplayerPage] Setting up multiplayer socket for user:', userName, 'userId:', userId);
+    // Don't connect until we have rating info
+    if (!userRating) {
+      return;
+    }
+
+    console.log('[MultiplayerPage] Setting up multiplayer socket for user:', userName, 'userId:', userId, 'rating:', userRating.current);
     let unsubscribeOnlinePlayers = () => {};
     let unsubscribeQueueStats = () => {};
     let unsubscribeMatchFound = () => {};
     let queueStatsInterval;
     
-    // Connect and announce presence
-    multiplayerSocket.connect({ username: userName, userId: userId }).then(() => {
+    // Connect and announce presence with rating
+    multiplayerSocket.connect({ 
+      username: userName, 
+      userId: userId, 
+      rating: userRating.current 
+    }).then(() => {
       console.log('[MultiplayerPage] Successfully connected to multiplayer socket');
       
       // Set up online players listener
@@ -159,9 +244,9 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
         const normalized = list.map((p, idx) => ({
           id: p.userId || p.socketId || idx,
           username: p.username || 'Player',
-          rating: p.rating || 0,
+          rating: p.rating || 1200,
           status: p.status || 'online',
-          rank: p.rating >= 2400 ? 'Grandmaster' : p.rating >= 2100 ? 'Master' : p.rating >= 1800 ? 'Expert' : p.rating >= 1600 ? 'Advanced' : 'Intermediate',
+          rank: ratingService.getRank(p.rating || 1200), // Use rating service for rank
           avatar: '🐦',
           isPlaying: p.status === 'in-game',
           winRate: 0
@@ -208,7 +293,7 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
       // DON'T disconnect the socket - it needs to persist for the game
       console.log('[MultiplayerPage] Socket listeners cleaned up but connection preserved for game');
     };
-  }, [userName, userId]);
+  }, [userName, userId, userRating]);
 
   // Helper functions
   const formatDuration = (milliseconds) => {
@@ -246,14 +331,7 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
   };
 
   const getRankColor = (rank) => {
-    switch (rank) {
-      case 'Grandmaster': return 'text-purple-400 bg-purple-900/30';
-      case 'Master': return 'text-blue-400 bg-blue-900/30';
-      case 'Expert': return 'text-green-400 bg-green-900/30';
-      case 'Advanced': return 'text-yellow-400 bg-yellow-900/30';
-      case 'Intermediate': return 'text-orange-400 bg-orange-900/30';
-      default: return 'text-gray-400 bg-gray-900/30';
-    }
+    return ratingService.getRankColor(rank);
   };
 
   const filteredPlayers = onlinePlayers.filter(player =>
@@ -404,26 +482,43 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
 
       {/* Current Stats Summary */}
       <div className="bg-black/60 backdrop-blur-md rounded-xl p-6 border border-white/30">
-        <h3 className="text-xl font-bold text-white mb-4 flex items-center">
-          <IoStar className="mr-2 text-purple-400" />
-          Your Stats
+        <h3 className="text-xl font-bold text-white mb-4 flex items-center justify-between">
+          <div className="flex items-center">
+            <IoStar className="mr-2 text-purple-400" />
+            Your Stats
+          </div>
+          <button
+            onClick={refreshUserRating}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm transition-colors"
+            title="Refresh Rating"
+          >
+            🔄 Refresh
+          </button>
         </h3>
         
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center">
-            <div className="text-2xl font-bold text-yellow-400 mb-1">1650</div>
+            <div className="text-2xl font-bold text-yellow-400 mb-1">
+              {userRating ? userRating.current : '...'}
+            </div>
             <div className="text-sm text-white/80">Rating</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-400 mb-1">73%</div>
+            <div className="text-2xl font-bold text-green-400 mb-1">
+              {userRating ? `${Math.round((matchHistory.filter(m => m.result === 'win').length / Math.max(1, matchHistory.length)) * 100)}%` : '...'}
+            </div>
             <div className="text-sm text-white/80">Win Rate</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-400 mb-1">127</div>
+            <div className="text-2xl font-bold text-blue-400 mb-1">
+              {userRating ? userRating.gamesPlayed : '...'}
+            </div>
             <div className="text-sm text-white/80">Games Played</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-purple-400 mb-1">Advanced</div>
+            <div className="text-2xl font-bold text-purple-400 mb-1">
+              {userRating ? userRating.rank : '...'}
+            </div>
             <div className="text-sm text-white/80">Rank</div>
           </div>
         </div>
@@ -706,11 +801,39 @@ const MultiplayerPage = ({ onBack, onStartGame, userName, userId, playerInventor
               <div className="mb-6">
                 <div className="text-6xl mb-4">⚔️</div>
                 <h4 className="text-2xl font-bold text-white mb-2">Match Found!</h4>
-                <p className="text-white/80 mb-4">
-                  vs <span className="text-yellow-400 font-bold">{matchFound.opponent.username}</span>
-                </p>
+                <div className="mb-4">
+                  <p className="text-white/80">
+                    vs <span className="text-yellow-400 font-bold">{matchFound.opponent.username}</span>
+                  </p>
+                  {matchFound.yourRating && matchFound.opponentRating && (
+                    <div className="flex justify-center items-center space-x-4 mt-2 text-sm">
+                      <div className="bg-blue-500/20 px-3 py-1 rounded">
+                        <span className="text-blue-300">You: </span>
+                        <span className="text-white font-bold">{matchFound.yourRating}</span>
+                      </div>
+                      <div className="text-white/60">vs</div>
+                      <div className="bg-red-500/20 px-3 py-1 rounded">
+                        <span className="text-red-300">Them: </span>
+                        <span className="text-white font-bold">{matchFound.opponentRating}</span>
+                      </div>
+                    </div>
+                  )}
+                  {userRating && matchFound.opponentRating && (
+                    <div className="mt-2">
+                      <span className="text-xs text-white/60">
+                        Win Probability: 
+                        <span className="text-green-400 font-bold ml-1">
+                          {ratingService.getWinProbability(userRating.current, matchFound.opponentRating)}%
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                </div>
                 <p className="text-sm text-white/60 mb-6">
                   {matchFound.gameMode} • You play as {matchFound.playerColor}
+                  {matchFound.gameMode === 'competitive' && (
+                    <span className="block mt-1 text-yellow-400">⚡ Rated Match</span>
+                  )}
                 </p>
               </div>
               

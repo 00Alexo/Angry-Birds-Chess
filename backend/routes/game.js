@@ -14,6 +14,9 @@ router.get('/game-history', gameController.getGameHistory);
 router.post('/mark-unfinished-as-losses', gameController.markUnfinishedGamesAsLosses);
 router.get('/unfinished-games-count', gameController.getUnfinishedGamesCount);
 
+// Rating routes
+router.get('/rating-info', gameController.getRatingInfo);
+
 // Player data routes
 router.get('/player-data', gameController.getPlayerData);
 router.put('/player-data', gameController.updatePlayerData);
